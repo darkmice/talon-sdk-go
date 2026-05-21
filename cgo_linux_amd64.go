@@ -10,6 +10,7 @@ package talon
 
 /*
 #cgo LDFLAGS: -L${SRCDIR}/lib/linux_amd64 -ltalon
+#cgo LDFLAGS: -Wl,-rpath,${SRCDIR}/lib/linux_amd64
 #cgo LDFLAGS: -lm -ldl -lpthread
 */
 import "C"
