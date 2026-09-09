@@ -1,370 +1,218 @@
-/*
- * Copyright (c) 2026 Talon Contributors
- * Author: dark.lijin@gmail.com
- * Licensed under the Talon Community Dual License Agreement.
- * See the LICENSE file in the project root for full license information.
- */
-
 package talon
 
 import (
+	"encoding/binary"
+	"math"
+	"math/big"
 	"testing"
 )
 
-// ── unwrapCell 单元测试 ──
-
-func TestUnwrapCell_Text(t *testing.T) {
-	got := unwrapCell(map[string]interface{}{"Text": "hello"})
-	if got != "hello" {
-		t.Errorf("Text: got %v, want hello", got)
-	}
-}
-
-func TestUnwrapCell_Integer(t *testing.T) {
-	got := unwrapCell(map[string]interface{}{"Integer": float64(42)})
-	v, ok := got.(int64)
-	if !ok || v != 42 {
-		t.Errorf("Integer: got %v (%T), want int64(42)", got, got)
-	}
-}
-
-func TestUnwrapCell_IntegerNegative(t *testing.T) {
-	got := unwrapCell(map[string]interface{}{"Integer": float64(-7)})
-	v, ok := got.(int64)
-	if !ok || v != -7 {
-		t.Errorf("Integer negative: got %v (%T), want int64(-7)", got, got)
-	}
-}
-
-func TestUnwrapCell_Float(t *testing.T) {
-	got := unwrapCell(map[string]interface{}{"Float": float64(3.14)})
-	v, ok := got.(float64)
-	if !ok || v != 3.14 {
-		t.Errorf("Float: got %v, want 3.14", got)
-	}
-}
-
-func TestUnwrapCell_Boolean_True(t *testing.T) {
-	got := unwrapCell(map[string]interface{}{"Boolean": true})
-	v, ok := got.(bool)
-	if !ok || !v {
-		t.Errorf("Boolean true: got %v, want true", got)
-	}
-}
-
-func TestUnwrapCell_Boolean_False(t *testing.T) {
-	got := unwrapCell(map[string]interface{}{"Boolean": false})
-	v, ok := got.(bool)
-	if !ok || v {
-		t.Errorf("Boolean false: got %v, want false", got)
-	}
-}
-
-func TestUnwrapCell_Null_BareString(t *testing.T) {
-	// talon 将 NULL 序列化为裸字符串 "Null"
-	got := unwrapCell("Null")
-	if got != nil {
-		t.Errorf("Null bare string: got %v, want nil", got)
-	}
-}
-
-func TestUnwrapCell_Null_Map(t *testing.T) {
-	// 防御性：map{"Null": nil} 形式也应解包为 nil
-	got := unwrapCell(map[string]interface{}{"Null": nil})
-	if got != nil {
-		t.Errorf("Null map: got %v, want nil", got)
-	}
-}
-
-func TestUnwrapCell_NonMap_String(t *testing.T) {
-	got := unwrapCell("bare string")
-	if got != "bare string" {
-		t.Errorf("non-map string: got %v, want bare string", got)
-	}
-}
-
-func TestUnwrapCell_NonMap_Int(t *testing.T) {
-	got := unwrapCell(int64(99))
-	if got != int64(99) {
-		t.Errorf("non-map int64: got %v, want 99", got)
-	}
-}
-
-func TestUnwrapCell_NonMap_Nil(t *testing.T) {
-	got := unwrapCell(nil)
-	if got != nil {
-		t.Errorf("non-map nil: got %v, want nil", got)
-	}
-}
-
-func TestUnwrapCell_UnknownTag(t *testing.T) {
-	orig := map[string]interface{}{"UnknownTag": "value"}
-	got := unwrapCell(orig)
-	gotMap, ok := got.(map[string]interface{})
-	if !ok {
-		t.Errorf("unknown tag: expected map[string]interface{}, got %T", got)
-		return
-	}
-	if gotMap["UnknownTag"] != "value" {
-		t.Errorf("unknown tag: expected map preserved, got %v", gotMap)
-	}
-}
-
-// ── Row 访问器单元测试 ──
-
-func makeRow() Row {
-	return Row{
-		"hello",       // 0: string
-		int64(42),     // 1: int64
-		float64(3.14), // 2: float64
-		true,          // 3: bool
-		nil,           // 4: nil
-	}
-}
-
-func TestRow_Str(t *testing.T) {
-	r := makeRow()
-	if got := r.Str(0); got != "hello" {
-		t.Errorf("Str(0): got %q, want hello", got)
-	}
-}
-
-func TestRow_Str_WrongType(t *testing.T) {
-	r := makeRow()
-	if got := r.Str(1); got != "" {
-		t.Errorf("Str(1) wrong type: got %q, want empty", got)
-	}
-}
-
-func TestRow_Str_OutOfBounds(t *testing.T) {
-	r := makeRow()
-	if got := r.Str(99); got != "" {
-		t.Errorf("Str(99) OOB: got %q, want empty", got)
-	}
-}
-
-func TestRow_Str_NegativeIndex(t *testing.T) {
-	r := makeRow()
-	if got := r.Str(-1); got != "" {
-		t.Errorf("Str(-1): got %q, want empty", got)
-	}
-}
-
-func TestRow_Int(t *testing.T) {
-	r := makeRow()
-	if got := r.Int(1); got != 42 {
-		t.Errorf("Int(1): got %d, want 42", got)
-	}
-}
-
-func TestRow_Int_FromFloat64(t *testing.T) {
-	r := Row{float64(100)}
-	if got := r.Int(0); got != 100 {
-		t.Errorf("Int from float64: got %d, want 100", got)
-	}
-}
-
-func TestRow_Int_WrongType(t *testing.T) {
-	r := makeRow()
-	if got := r.Int(0); got != 0 {
-		t.Errorf("Int(0) wrong type: got %d, want 0", got)
-	}
-}
-
-func TestRow_Int_OutOfBounds(t *testing.T) {
-	r := makeRow()
-	if got := r.Int(99); got != 0 {
-		t.Errorf("Int(99) OOB: got %d, want 0", got)
-	}
-}
-
-func TestRow_Float(t *testing.T) {
-	r := makeRow()
-	if got := r.Float(2); got != 3.14 {
-		t.Errorf("Float(2): got %f, want 3.14", got)
-	}
-}
-
-func TestRow_Float_FromInt64(t *testing.T) {
-	r := makeRow()
-	if got := r.Float(1); got != 42.0 {
-		t.Errorf("Float from int64: got %f, want 42.0", got)
-	}
-}
-
-func TestRow_Float_WrongType(t *testing.T) {
-	r := makeRow()
-	if got := r.Float(0); got != 0 {
-		t.Errorf("Float(0) wrong type: got %f, want 0", got)
-	}
-}
-
-func TestRow_Float_OutOfBounds(t *testing.T) {
-	r := makeRow()
-	if got := r.Float(99); got != 0 {
-		t.Errorf("Float(99) OOB: got %f, want 0", got)
-	}
-}
-
-func TestRow_Bool(t *testing.T) {
-	r := makeRow()
-	if got := r.Bool(3); !got {
-		t.Errorf("Bool(3): got false, want true")
-	}
-}
-
-func TestRow_Bool_WrongType(t *testing.T) {
-	r := makeRow()
-	if got := r.Bool(0); got {
-		t.Errorf("Bool(0) wrong type: got true, want false")
-	}
-}
-
-func TestRow_Bool_OutOfBounds(t *testing.T) {
-	r := makeRow()
-	if got := r.Bool(99); got {
-		t.Errorf("Bool(99) OOB: got true, want false")
-	}
-}
-
-func TestRow_IsNull_True(t *testing.T) {
-	r := makeRow()
-	if !r.IsNull(4) {
-		t.Errorf("IsNull(4): want true")
-	}
-}
-
-func TestRow_IsNull_False(t *testing.T) {
-	r := makeRow()
-	if r.IsNull(0) {
-		t.Errorf("IsNull(0): want false")
-	}
-}
-
-func TestRow_IsNull_OutOfBounds(t *testing.T) {
-	r := makeRow()
-	if !r.IsNull(99) {
-		t.Errorf("IsNull(99) OOB: want true")
-	}
-}
-
-// ── Query 集成测试 ──
-
-func TestQuery_CreateInsertSelect(t *testing.T) {
-	dir := t.TempDir()
-	db, err := Open(dir)
+func mustText(t *testing.T, value string) Value {
+	t.Helper()
+	result, err := TextValue(value)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatal(err)
 	}
-	defer db.Close()
+	return result
+}
 
-	// 创建表
-	_, err = db.SQL("CREATE TABLE test_items (id INTEGER PRIMARY KEY, name TEXT, score REAL, active BOOLEAN)")
+func mustFloat(t *testing.T, value float64) Value {
+	t.Helper()
+	result, err := FloatValue(value)
 	if err != nil {
-		t.Fatalf("CREATE TABLE: %v", err)
+		t.Fatal(err)
 	}
+	return result
+}
 
-	// 插入几行
-	inserts := []string{
-		"INSERT INTO test_items (id, name, score, active) VALUES (1, 'alpha', 1.5, true)",
-		"INSERT INTO test_items (id, name, score, active) VALUES (2, 'beta', 2.7, false)",
-		"INSERT INTO test_items (id, name, score, active) VALUES (3, 'gamma', 0.0, true)",
+func TestStrictWireRoundTripAllValueKinds(t *testing.T) {
+	jsonValue, err := JSONValue([]byte(`{"answer":42}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, ins := range inserts {
-		_, err = db.SQL(ins)
+	vector, err := VectorValue([]float32{1.25, -2.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	geo, err := GeoPointValue(35.6762, 139.6503)
+	if err != nil {
+		t.Fatal(err)
+	}
+	timeValue, err := TimeValue(1234)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decimal, err := DecimalValue(big.NewInt(-12300), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := []Value{NullValue(), IntegerValue(-7), mustFloat(t, 3.5), mustText(t, "hello"), BlobValue([]byte{0, 1, 2}), BooleanValue(true), jsonValue, vector, TimestampValue(1700000000), geo, DateValue(-1), timeValue, decimal}
+	wire := make([]byte, 8)
+	binary.LittleEndian.PutUint32(wire[:4], 1)
+	binary.LittleEndian.PutUint32(wire[4:8], uint32(len(values)))
+	for _, value := range values {
+		wire, err = appendWireValue(wire, value)
 		if err != nil {
-			t.Fatalf("INSERT: %v", err)
+			t.Fatal(err)
 		}
 	}
-
-	// 查询
-	rows, err := db.Query("SELECT id, name, score, active FROM test_items ORDER BY id")
+	rows, err := decodeRows(wire)
 	if err != nil {
-		t.Fatalf("Query: %v", err)
+		t.Fatal(err)
 	}
-	if len(rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(rows))
+	if len(rows) != 1 || len(rows[0]) != len(values) {
+		t.Fatalf("decoded shape = %d x %d", len(rows), len(rows[0]))
 	}
-
-	// 验证第一行
-	r := rows[0]
-	if r.Int(0) != 1 {
-		t.Errorf("row[0].Int(0): got %d, want 1", r.Int(0))
-	}
-	if r.Str(1) != "alpha" {
-		t.Errorf("row[0].Str(1): got %q, want alpha", r.Str(1))
-	}
-	if r.Float(2) != 1.5 {
-		t.Errorf("row[0].Float(2): got %f, want 1.5", r.Float(2))
-	}
-	if !r.Bool(3) {
-		t.Errorf("row[0].Bool(3): want true")
-	}
-
-	// 验证第二行
-	r2 := rows[1]
-	if r2.Int(0) != 2 {
-		t.Errorf("row[1].Int(0): got %d, want 2", r2.Int(0))
-	}
-	if r2.Str(1) != "beta" {
-		t.Errorf("row[1].Str(1): got %q, want beta", r2.Str(1))
-	}
-	if r2.Bool(3) {
-		t.Errorf("row[1].Bool(3): want false")
+	for index := range values {
+		if rows[0][index].Kind() != values[index].Kind() {
+			t.Fatalf("value %d kind = %d, want %d", index, rows[0][index].Kind(), values[index].Kind())
+		}
 	}
 }
 
-func TestQuery_NullValues(t *testing.T) {
-	dir := t.TempDir()
-	db, err := Open(dir)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
+func TestDecimalValueExactRoundTripAndBounds(t *testing.T) {
+	max := new(big.Int).Sub(new(big.Int).Exp(big.NewInt(10), big.NewInt(38), nil), big.NewInt(1))
+	for _, coefficient := range []*big.Int{big.NewInt(0), big.NewInt(-1), max, new(big.Int).Neg(max)} {
+		value, err := DecimalValue(coefficient, 38)
+		if err != nil {
+			t.Fatalf("DecimalValue(%s): %v", coefficient, err)
+		}
+		wire, err := appendWireValue(nil, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, position, err := decodeWireValue(wire, 0)
+		if err != nil || position != len(wire) {
+			t.Fatalf("decode decimal: position=%d error=%v", position, err)
+		}
+		actual, scale, ok := decoded.Decimal()
+		if !ok || actual.Cmp(coefficient) != 0 || scale != 38 {
+			t.Fatalf("decimal roundtrip = (%v,%d,%v), want (%v,38,true)", actual, scale, ok, coefficient)
+		}
+		actual.SetInt64(7)
+		again, _, _ := decoded.Decimal()
+		if again.Cmp(coefficient) != 0 {
+			t.Fatal("Decimal getter leaked mutable coefficient state")
+		}
 	}
-	defer db.Close()
-
-	_, err = db.SQL("CREATE TABLE nullable_tbl (id INTEGER, val TEXT)")
-	if err != nil {
-		t.Fatalf("CREATE TABLE: %v", err)
+	tooPrecise := new(big.Int).Exp(big.NewInt(10), big.NewInt(38), nil)
+	if _, err := DecimalValue(tooPrecise, 0); err == nil {
+		t.Fatal("39-digit decimal coefficient was accepted")
 	}
-	_, err = db.SQL("INSERT INTO nullable_tbl VALUES (1, NULL)")
-	if err != nil {
-		t.Fatalf("INSERT: %v", err)
+	if _, err := DecimalValue(big.NewInt(1), 39); err == nil {
+		t.Fatal("decimal scale above 38 was accepted")
 	}
-
-	rows, err := db.Query("SELECT id, val FROM nullable_tbl")
-	if err != nil {
-		t.Fatalf("Query: %v", err)
+	if _, err := DecimalValue(nil, 0); err == nil {
+		t.Fatal("nil decimal coefficient was accepted")
 	}
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(rows))
+	minusOne, _ := DecimalValue(big.NewInt(-1), 0)
+	wire, _ := appendWireValue(nil, minusOne)
+	for index, value := range wire[1:17] {
+		if value != 0xff {
+			t.Fatalf("negative i128 byte %d = %x, want ff", index, value)
+		}
 	}
-	r := rows[0]
-	if r.Int(0) != 1 {
-		t.Errorf("id: got %d, want 1", r.Int(0))
+	if _, _, err := decodeWireValue([]byte{byte(KindDecimal), 1}, 0); err == nil {
+		t.Fatal("truncated decimal was accepted")
 	}
-	if !r.IsNull(1) {
-		t.Errorf("val should be NULL, got %v (type %T)", r[1], r[1])
+	invalidScale := append([]byte{byte(KindDecimal)}, make([]byte, 17)...)
+	invalidScale[len(invalidScale)-1] = 39
+	if _, _, err := decodeWireValue(invalidScale, 0); err == nil {
+		t.Fatal("decimal with invalid scale was accepted")
 	}
 }
 
-func TestQuery_EmptyResult(t *testing.T) {
-	dir := t.TempDir()
-	db, err := Open(dir)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
+func TestStrictWireDecoderRejectsMalformedValues(t *testing.T) {
+	tests := []struct {
+		name string
+		wire []byte
+	}{
+		{name: "unknown tag", wire: []byte{1, 0, 0, 0, 1, 0, 0, 0, 99}},
+		{name: "truncated integer", wire: []byte{1, 0, 0, 0, 1, 0, 0, 0, byte(KindInteger), 1}},
+		{name: "non canonical bool", wire: []byte{1, 0, 0, 0, 1, 0, 0, 0, byte(KindBoolean), 2}},
+		{name: "trailing bytes", wire: []byte{1, 0, 0, 0, 1, 0, 0, 0, byte(KindNull), 0}},
+		{name: "inconsistent empty shape", wire: []byte{0, 0, 0, 0, 1, 0, 0, 0}},
+		{name: "impossible allocation shape", wire: []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
 	}
-	defer db.Close()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := decodeRows(test.wire); err == nil {
+				t.Fatal("malformed wire was accepted")
+			}
+		})
+	}
 
-	_, err = db.SQL("CREATE TABLE empty_tbl (id INTEGER)")
-	if err != nil {
-		t.Fatalf("CREATE TABLE: %v", err)
+	nonFinite := make([]byte, 17)
+	binary.LittleEndian.PutUint32(nonFinite[:4], 1)
+	binary.LittleEndian.PutUint32(nonFinite[4:8], 1)
+	nonFinite[8] = byte(KindFloat)
+	binary.LittleEndian.PutUint64(nonFinite[9:], math.Float64bits(math.NaN()))
+	if _, err := decodeRows(nonFinite); err == nil {
+		t.Fatal("NaN wire value was accepted")
 	}
+	oversizedCell := make([]byte, 13)
+	binary.LittleEndian.PutUint32(oversizedCell[:4], 1)
+	binary.LittleEndian.PutUint32(oversizedCell[4:8], 1)
+	oversizedCell[8] = byte(KindBlob)
+	binary.LittleEndian.PutUint32(oversizedCell[9:], maxWireCellBytes+1)
+	if _, err := decodeRows(oversizedCell); err == nil {
+		t.Fatal("oversized cell declaration was accepted")
+	}
+}
 
-	rows, err := db.Query("SELECT id FROM empty_tbl")
-	if err != nil {
-		t.Fatalf("Query empty: %v", err)
+func TestValueConstructorsRejectAmbiguousInputs(t *testing.T) {
+	if _, err := FloatValue(math.Inf(1)); err == nil {
+		t.Fatal("infinite float was accepted")
 	}
-	if len(rows) != 0 {
-		t.Errorf("expected 0 rows, got %d", len(rows))
+	if _, err := JSONValue([]byte(`{"x":1,"x":2}`)); err == nil {
+		t.Fatal("duplicate JSON key was accepted")
+	}
+	if _, err := VectorValue(nil); err == nil {
+		t.Fatal("empty vector was accepted")
+	}
+	if _, err := GeoPointValue(91, 0); err == nil {
+		t.Fatal("invalid latitude was accepted")
+	}
+	if _, err := TimeValue(maxTimeNanos + 1); err == nil {
+		t.Fatal("invalid time was accepted")
+	}
+}
+
+func TestRowAccessorsDoNotCoerceNumericTypes(t *testing.T) {
+	row := Row{IntegerValue(42), mustFloat(t, 42), mustText(t, "42")}
+	if row.Int(0) != 42 || row.Int(1) != 0 || row.Int(2) != 0 {
+		t.Fatalf("integer accessor coerced a non-integer: %#v", row)
+	}
+	if row.Float(1) != 42 || row.Float(0) != 0 {
+		t.Fatalf("float accessor coerced an integer: %#v", row)
+	}
+}
+
+func TestParameterizedExecAndQuery(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.Exec("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, score REAL, active BOOLEAN)"); err != nil {
+		t.Fatal(err)
+	}
+	attack := "x'); DROP TABLE items; --"
+	if err := db.Exec("INSERT INTO items (id, name, score, active) VALUES (?, ?, ?, ?)", IntegerValue(1), mustText(t, attack), mustFloat(t, 1.5), BooleanValue(true)); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Query("SELECT id, name, score, active FROM items WHERE id = ?", IntegerValue(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Int(0) != 1 || rows[0].Str(1) != attack || rows[0].Float(2) != 1.5 || !rows[0].Bool(3) {
+		t.Fatalf("unexpected parameterized result: %#v", rows)
+	}
+	if _, err := db.Query("SELECT COUNT(*) FROM items"); err != nil {
+		t.Fatalf("table was altered by parameter content: %v", err)
+	}
+}
+
+func TestNativeFailureIsNotClassifiedFromText(t *testing.T) {
+	db := openTestDB(t)
+	_, err := db.Query("SELECT * FROM definitely_missing_table")
+	if ErrorCodeOf(err) != CodeNativeUnclassified {
+		t.Fatalf("native error code = %q, error = %v", ErrorCodeOf(err), err)
 	}
 }

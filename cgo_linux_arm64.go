@@ -1,4 +1,4 @@
-//go:build linux && amd64
+//go:build linux && arm64
 
 /*
  * Copyright (c) 2026 Talon Contributors
