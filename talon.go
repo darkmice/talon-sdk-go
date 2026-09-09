@@ -15,6 +15,7 @@ package talon
 */
 import "C"
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -210,7 +211,7 @@ func (db *DB) execute(module, action string, params interface{}) (json.RawMessag
 	}
 	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
-		return nil, err
+		return nil, operationError(ErrorEncode, module+"."+action, "无法编码 talon_execute 请求", err)
 	}
 	if len(cmdBytes) > maxNativeJSONRequestBytes {
 		return nil, newError(CodeInvalidArgument, "execute", "native JSON request exceeds the SDK bound", nil)
@@ -257,6 +258,9 @@ func (db *DB) execute(module, action string, params interface{}) (json.RawMessag
 	}
 	if result.Code != "" || result.Error != "" || result.Term != nil || len(result.LeaderHint) != 0 {
 		return nil, newError(CodeProtocolViolation, "execute", "successful native response mixed error fields into its envelope", nil)
+	}
+	if len(result.Data) == 0 || bytes.Equal(bytes.TrimSpace(result.Data), []byte("null")) {
+		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 成功响应缺少 data 字段", nil)
 	}
 	return result.Data, nil
 }

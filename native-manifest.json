@@ -1,0 +1,151 @@
+{
+  "schema_version": "1.2",
+  "generated_at_utc": "2026-09-08T20:42:44Z",
+  "release_gate": {
+    "release_ready": false,
+    "sdk_native_matrix_release_ready": true,
+    "declared_core_matrix_release_ready": false,
+    "blocking_platforms": [
+      "linux-arm64",
+      "macos-amd64",
+      "windows-amd64",
+      "windows-arm64",
+      "linux-loongarch64",
+      "linux-riscv64"
+    ],
+    "blockers": [
+      "the six remaining platforms declared by talon-bin have not been built and aggregated by the pure-Core workflow",
+      "general conditional KV transactions are not available in the pinned clean Core SHA"
+    ]
+  },
+  "sdk": {
+    "module": "github.com/darkmice/talon-sdk-go",
+    "baseline_tag": "v0.2.1",
+    "baseline_git_sha": "4d797fd009003fb52d54bfa640f1fe51a9fdd283",
+    "bundled_native_platforms": ["darwin-arm64", "linux-amd64"]
+  },
+  "native_core": {
+    "repository": "https://github.com/darkmice/talon-core",
+    "git_sha": "18b96399610a9f8c2498d57f3a8ddcd44c2f57a0",
+    "cargo_package_version": "0.1.1",
+    "cargo_lock_sha256": "82cbfe1eb22380a7508a5149b3b2e1206283a6a835abd477025100c689890a61",
+    "source_clean": true,
+    "source_state": "exact origin/main commit exported through clean detached worktrees; builds used cargo --locked"
+  },
+  "abi": {
+    "profile": "talon-c-abi-v0.1.0-json-execute",
+    "header": "include/talon.h",
+    "header_sha256": "16e43e7184e9195c3e5e613ee5d06137ca58bc2e4dac6798c64c4e367b40ec89",
+    "sdk_entrypoint": "talon_execute",
+    "required_symbols": ["talon_open", "talon_close", "talon_persist", "talon_execute", "talon_free_string"],
+    "parameter_binding": "SQL params.bind values are decoded as Talon Value and passed to run_sql_param; SQL interpolation is not used",
+    "ownership": "talon_execute success output is released exactly once with talon_free_string",
+    "error_boundary": "native business errors are text-only and classified as engine; SDK validation, protocol, closed-handle and native-call failures have stable SDK codes"
+  },
+  "materials": {
+    "core_license": {
+      "path": "LICENSE.core",
+      "sha256": "e6a6068e4e178bd5262e1e31a64576e68dd023316c3b20f68cc67f4962d2d53e"
+    }
+  },
+  "platforms": [
+    {
+      "goos": "darwin",
+      "goarch": "arm64",
+      "release_ready": true,
+      "provenance": {
+        "source_git_sha": "18b96399610a9f8c2498d57f3a8ddcd44c2f57a0",
+        "source_clean": true,
+        "cargo_lock_sha256": "82cbfe1eb22380a7508a5149b3b2e1206283a6a835abd477025100c689890a61",
+        "build_command": "cargo test --locked --lib execute_sql_param_bind; cargo test --locked --lib run_sql_param; cargo build --locked --release --lib",
+        "build_profile": "release",
+        "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+        "rust_host": "aarch64-apple-darwin",
+        "cargo_target": "aarch64-apple-darwin",
+        "native_conformance_tested": true,
+        "sbom_and_licenses_covered": true,
+        "verification": [
+          "cargo test --locked --lib: 1531 passed, 0 failed",
+          "GOWORK=off go test ./... -count=1: passed",
+          "GOWORK=off go test -race ./... -count=1: passed",
+          "parameter injection and concurrent Close stress tests at count=10: passed",
+          "required static and dynamic ABI symbols: passed"
+        ]
+      },
+      "materials": {
+        "cyclonedx_sbom": {
+          "path": "native-core-sbom-macos-arm64.cdx.json",
+          "sha256": "4f60acfde96de0e36dbcbc8c1213fab1fe5f4f338f044e2e62151818ae0f5717"
+        },
+        "license_inventory": {
+          "path": "native-core-licenses-macos-arm64.json",
+          "sha256": "1492f66e60346fe84e2533b3d2a24ef3720ec15337c9b12584d99e72d0afc38d"
+        }
+      },
+      "dynamic_library": {
+        "path": "lib/darwin_arm64/libtalon.dylib",
+        "format": "Mach-O 64-bit arm64",
+        "size": 9368544,
+        "sha256": "d8cb2cbe4b39bdefd3951481597cf3b247380bce71edf21ebe3a723bb38158e7",
+        "cargo_build_output_sha256_before_install_name_rewrite": "5080ea1c03cdcd46d38b485fb496b4a19c4f34b7b5d602d6217eb9a92f5a815c",
+        "uuid": "87F94A39-4DEF-3062-9337-A135E5436E56",
+        "install_name": "@rpath/libtalon.dylib",
+        "install_name_rewritten": true
+      },
+      "static_library": {
+        "path": "lib/darwin_arm64/libtalon.a",
+        "format": "ar archive arm64",
+        "size": 69453856,
+        "sha256": "ec5624ab5e35a7420adc722cff85f1d89091b2e1422a933666da772140a095a6"
+      }
+    },
+    {
+      "goos": "linux",
+      "goarch": "amd64",
+      "release_ready": true,
+      "provenance": {
+        "source_git_sha": "18b96399610a9f8c2498d57f3a8ddcd44c2f57a0",
+        "source_clean": true,
+        "cargo_lock_sha256": "82cbfe1eb22380a7508a5149b3b2e1206283a6a835abd477025100c689890a61",
+        "build_command": "docker --platform linux/amd64; cargo test --locked parameter bind; cargo build --locked --release --lib",
+        "build_profile": "release",
+        "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+        "rust_host": "x86_64-unknown-linux-gnu",
+        "cargo_target": "x86_64-unknown-linux-gnu",
+        "runner": "Docker Debian 12 on linux/amd64 emulation",
+        "native_conformance_tested": true,
+        "sbom_and_licenses_covered": true,
+        "verification": [
+          "cargo test --locked --lib execute_sql_param_bind: 1 passed, 0 failed",
+          "cargo test --locked --lib run_sql_param: 2 passed, 0 failed",
+          "GOWORK=off go test ./... -count=1 on linux/amd64: passed",
+          "GOWORK=off go test -race targeted native/SQL/Close tests on linux/amd64: passed",
+          "required static and dynamic ABI symbols: passed"
+        ]
+      },
+      "materials": {
+        "cyclonedx_sbom": {
+          "path": "native-core-sbom-linux-amd64.cdx.json",
+          "sha256": "b4f390a4599ddccf84457431218bf39a60e2991a9290240a92e6b24756f4b7a9"
+        },
+        "license_inventory": {
+          "path": "native-core-licenses-linux-amd64.json",
+          "sha256": "7280cb70140a8fca7bde53107de09f4a9b016e078b7735c4025b68a3bc1d316a"
+        }
+      },
+      "dynamic_library": {
+        "path": "lib/linux_amd64/libtalon.so",
+        "format": "ELF 64-bit x86-64",
+        "size": 11478264,
+        "sha256": "081b4de56e0ecdf5f861fcae9d2ef1039b2904db5c7deafdcb09516c2d33a88f",
+        "build_id_sha1": "9a840e2dbb903294d1d7d5f11e7d949e1a4d5d74"
+      },
+      "static_library": {
+        "path": "lib/linux_amd64/libtalon.a",
+        "format": "ar archive x86-64",
+        "size": 82113014,
+        "sha256": "1b8927188499b02b940d862149f5d6f01bec669c7bc49c3bd229d1e660e05cc8"
+      }
+    }
+  ]
+}

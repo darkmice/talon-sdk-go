@@ -370,3 +370,19 @@ interpolation.
 ## License
 
 See `LICENSE`.
+
+## Parameterized SQL
+
+Use `ExecParams` and `QueryParams` for positional `?` parameters. Values are
+encoded through the native `talon_execute` JSON `bind` path; SQL text is never
+constructed by interpolation. `Query` and `QueryParams` reject unknown or
+malformed Talon Value tags, while the original `SQL` method remains available
+for callers that need the legacy raw result shape.
+
+The exact bundled native artifacts, platforms, ABI header hash and provenance
+boundary are recorded in [native-manifest.json](native-manifest.json).
+
+General conditional KV transactions are intentionally not emulated in this
+SDK. `KvSetNX` retains its existing single-key semantics; it is not a substitute
+for multi-key compare-and-swap. Consumers that need conditional transactions
+must wait for a clean pinned Core revision and complete native matrix.
