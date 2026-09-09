@@ -11,166 +11,136 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"reflect"
+	"strconv"
 )
 
-// JSONValue explicitly binds a Go JSON value as Talon JSONB. The bytes must
-// contain exactly one valid JSON value.
-type JSONValue json.RawMessage
-
-type taggedBindValue map[string]interface{}
-
-// NativeSQLBindSupported reports whether this module's bundled native
-// artifacts consume talon_execute params.bind. The bundled darwin-arm64 and
-// linux-amd64 artifacts are built from the pinned Talon Core revision recorded
-// in native-manifest.json and pass the parameter-binding conformance tests.
+// NativeSQLBindSupported reports whether this SDK exposes parameterized SQL
+// through the typed native ABI.
 const NativeSQLBindSupported = true
 
-// ExecParams executes a parameterized SQL statement through talon_execute's
-// params.bind path. Placeholders are positional question marks. Supported Go
-// values are nil, strings, booleans, signed integers, uint values that fit in
-// int64, finite floats, []byte (BLOB), json.RawMessage and JSONValue (JSONB).
+// ExecParams executes SQL with typed parameters and never interpolates caller
+// data into SQL text.
 func (db *DB) ExecParams(sql string, params ...interface{}) error {
-	if len(params) > 0 && !NativeSQLBindSupported {
-		return operationError(ErrorUnsupported, "sql.bind", "随附 Talon v0.1.0 native library 不消费 talon_execute params.bind", nil)
+	values, err := encodeParamValues(params)
+	if err != nil {
+		return err
 	}
-	_, err := db.sqlParams(sql, params)
-	return err
+	return db.Exec(sql, values...)
 }
 
-// QueryParams executes parameterized SQL and strictly decodes Talon's tagged
-// Value rows. Unknown tags, malformed numeric values and unexpected response
-// fields are protocol errors rather than silently coerced values.
+// QueryParams executes parameterized SQL through the typed native ABI.
 func (db *DB) QueryParams(sql string, params ...interface{}) ([]Row, error) {
-	if len(params) > 0 && !NativeSQLBindSupported {
-		return nil, operationError(ErrorUnsupported, "sql.bind", "随附 Talon v0.1.0 native library 不消费 talon_execute params.bind", nil)
-	}
-	result, err := db.sqlParams(sql, params)
+	values, err := encodeParamValues(params)
 	if err != nil {
 		return nil, err
 	}
-	return decodeRows(result.Rows)
+	return db.Query(sql, values...)
 }
 
-type sqlWireResult struct {
-	Rows    []json.RawMessage `json:"rows"`
-	Columns []string          `json:"columns,omitempty"`
-}
-
-func (db *DB) sqlParams(sql string, params []interface{}) (*sqlWireResult, error) {
-	bind, err := encodeBindValues(params)
-	if err != nil {
-		return nil, err
-	}
-	wireParams := map[string]interface{}{"sql": sql, "bind": bind}
-	data, err := db.execute("sql", "", wireParams)
-	if err != nil {
-		return nil, err
-	}
-	var result sqlWireResult
-	if err := decodeStrictJSON(data, &result); err != nil {
-		return nil, operationError(ErrorProtocol, "sql", "SQL 响应 data 结构无效", err)
-	}
-	if result.Rows == nil {
-		return nil, operationError(ErrorProtocol, "sql", "SQL 响应缺少 rows 字段", nil)
-	}
-	return &result, nil
-}
-
-func encodeBindValues(params []interface{}) ([]interface{}, error) {
-	values := make([]interface{}, len(params))
-	for i, param := range params {
-		value, err := encodeBindValue(param)
+func encodeParamValues(params []interface{}) ([]Value, error) {
+	values := make([]Value, len(params))
+	for index, param := range params {
+		value, err := encodeParamValue(param)
 		if err != nil {
-			return nil, operationError(ErrorInvalidArgument, "sql.bind", fmt.Sprintf("参数 %d 不受支持", i), err)
+			return nil, newError(CodeInvalidArgument, "sql.bind", fmt.Sprintf("parameter %d is invalid", index), err)
 		}
-		values[i] = value
+		values[index] = value
 	}
 	return values, nil
 }
 
-func encodeBindValue(value interface{}) (interface{}, error) {
-	if value == nil {
-		return "Null", nil
-	}
-	switch v := value.(type) {
+func encodeParamValue(value interface{}) (Value, error) {
+	switch typed := value.(type) {
+	case nil:
+		return NullValue(), nil
 	case string:
-		return taggedBindValue{"Text": v}, nil
+		return TextValue(typed)
 	case bool:
-		return taggedBindValue{"Boolean": v}, nil
+		return BooleanValue(typed), nil
 	case int:
-		return taggedBindValue{"Integer": int64(v)}, nil
+		return IntegerValue(int64(typed)), nil
 	case int8:
-		return taggedBindValue{"Integer": int64(v)}, nil
+		return IntegerValue(int64(typed)), nil
 	case int16:
-		return taggedBindValue{"Integer": int64(v)}, nil
+		return IntegerValue(int64(typed)), nil
 	case int32:
-		return taggedBindValue{"Integer": int64(v)}, nil
+		return IntegerValue(int64(typed)), nil
 	case int64:
-		return taggedBindValue{"Integer": v}, nil
+		return IntegerValue(typed), nil
 	case uint:
-		if uint64(v) > math.MaxInt64 {
-			return nil, fmt.Errorf("uint 值超出 Talon INTEGER 范围")
+		if uint64(typed) > math.MaxInt64 {
+			return Value{}, fmt.Errorf("uint value exceeds Talon INTEGER range")
 		}
-		return taggedBindValue{"Integer": int64(v)}, nil
+		return IntegerValue(int64(typed)), nil
 	case uint8:
-		return taggedBindValue{"Integer": int64(v)}, nil
+		return IntegerValue(int64(typed)), nil
 	case uint16:
-		return taggedBindValue{"Integer": int64(v)}, nil
+		return IntegerValue(int64(typed)), nil
 	case uint32:
-		return taggedBindValue{"Integer": int64(v)}, nil
+		return IntegerValue(int64(typed)), nil
 	case uint64:
-		if v > math.MaxInt64 {
-			return nil, fmt.Errorf("uint64 值超出 Talon INTEGER 范围")
+		if typed > math.MaxInt64 {
+			return Value{}, fmt.Errorf("uint64 value exceeds Talon INTEGER range")
 		}
-		return taggedBindValue{"Integer": int64(v)}, nil
+		return IntegerValue(int64(typed)), nil
 	case float32:
-		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-			return nil, fmt.Errorf("Talon FLOAT 不接受 NaN 或 Infinity")
-		}
-		return taggedBindValue{"Float": float64(v)}, nil
+		return FloatValue(float64(typed))
 	case float64:
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return nil, fmt.Errorf("Talon FLOAT 不接受 NaN 或 Infinity")
-		}
-		return taggedBindValue{"Float": v}, nil
+		return FloatValue(typed)
 	case []byte:
-		return taggedBindValue{"Blob": v}, nil
+		return BlobValue(typed), nil
 	case json.RawMessage:
-		return encodeJSONBind(v)
-	case JSONValue:
-		return encodeJSONBind(json.RawMessage(v))
+		return JSONValue(typed)
 	default:
-		return nil, fmt.Errorf("Go 类型 %s 没有稳定的 Talon Value 映射", reflect.TypeOf(value))
+		return Value{}, fmt.Errorf("Go type %T has no stable Talon Value mapping", value)
 	}
 }
 
-func encodeJSONBind(raw json.RawMessage) (interface{}, error) {
-	var value interface{}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
-		return nil, fmt.Errorf("无效 JSONB: %w", err)
+// decodeCell decodes the JSON tagged-value representation used by the
+// high-level execute protocol. The binary Query API remains the production
+// path; this helper is retained for strict protocol tests and compatibility.
+func decodeCell(raw json.RawMessage) (Value, error) {
+	var text string
+	if bytes.Equal(bytes.TrimSpace(raw), []byte(`"Null"`)) {
+		return NullValue(), nil
 	}
-	var trailing interface{}
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return nil, fmt.Errorf("JSONB 包含尾随内容")
+	var object map[string]json.RawMessage
+	if err := decodeStrictJSON(raw, &object); err != nil || len(object) != 1 {
+		return Value{}, fmt.Errorf("invalid tagged value")
 	}
-	return taggedBindValue{"Jsonb": value}, nil
-}
-
-func decodeStrictJSON(raw []byte, destination interface{}) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	decoder.UseNumber()
-	if err := decoder.Decode(destination); err != nil {
-		return err
+	for tag, payload := range object {
+		switch tag {
+		case "Integer":
+			var number json.Number
+			if err := json.Unmarshal(payload, &number); err != nil {
+				return Value{}, fmt.Errorf("invalid integer payload")
+			}
+			value, err := strconv.ParseInt(number.String(), 10, 64)
+			if err != nil {
+				return Value{}, fmt.Errorf("invalid integer payload")
+			}
+			return IntegerValue(value), nil
+		case "Float":
+			var value float64
+			if err := json.Unmarshal(payload, &value); err != nil {
+				return Value{}, fmt.Errorf("invalid float payload")
+			}
+			return FloatValue(value)
+		case "Text":
+			if err := json.Unmarshal(payload, &text); err != nil {
+				return Value{}, fmt.Errorf("invalid text payload")
+			}
+			return TextValue(text)
+		case "Boolean":
+			var value bool
+			if err := json.Unmarshal(payload, &value); err != nil {
+				return Value{}, fmt.Errorf("invalid boolean payload")
+			}
+			return BooleanValue(value), nil
+		default:
+			return Value{}, fmt.Errorf("unknown tagged value")
+		}
 	}
-	var trailing interface{}
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return fmt.Errorf("尾随 JSON")
-	}
-	return nil
+	return Value{}, fmt.Errorf("invalid tagged value")
 }

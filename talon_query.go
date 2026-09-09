@@ -302,6 +302,44 @@ func (row Row) Value(index int) (Value, bool) {
 	return row[index], true
 }
 
+// GetInt64/GetString/GetBool are error-returning compatibility accessors for
+// callers migrating from the JSON row API. They never coerce between kinds.
+func (row Row) GetInt64(index int) (int64, error) {
+	value, ok := row.Value(index)
+	if !ok {
+		return 0, newError(CodeInvalidArgument, "row.int64", "column index is out of range", nil)
+	}
+	result, ok := value.Integer()
+	if !ok {
+		return 0, newError(CodeProtocolViolation, "row.int64", "column is not INTEGER", nil)
+	}
+	return result, nil
+}
+
+func (row Row) GetString(index int) (string, error) {
+	value, ok := row.Value(index)
+	if !ok {
+		return "", newError(CodeInvalidArgument, "row.string", "column index is out of range", nil)
+	}
+	result, ok := value.String()
+	if !ok {
+		return "", newError(CodeProtocolViolation, "row.string", "column is not TEXT", nil)
+	}
+	return result, nil
+}
+
+func (row Row) GetBool(index int) (bool, error) {
+	value, ok := row.Value(index)
+	if !ok {
+		return false, newError(CodeInvalidArgument, "row.bool", "column index is out of range", nil)
+	}
+	result, ok := value.Boolean()
+	if !ok {
+		return false, newError(CodeProtocolViolation, "row.bool", "column is not BOOLEAN", nil)
+	}
+	return result, nil
+}
+
 func (row Row) Str(index int) string {
 	value, ok := row.Value(index)
 	if !ok {

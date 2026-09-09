@@ -195,3 +195,21 @@ var (
 		Message:   "storage_conditional_batch_v1 is not implemented by this SDK/Core ABI",
 	}
 )
+
+// Legacy names retained for the JSON-oriented helpers introduced in v0.2.2.
+// They map onto the machine-readable classifications above so callers can
+// migrate without a second error hierarchy.
+const (
+	ErrorUnknown         ErrorCode = CodeNativeUnclassified
+	ErrorClosed          ErrorCode = CodeDatabaseClosed
+	ErrorInvalidArgument ErrorCode = CodeInvalidArgument
+	ErrorUnsupported     ErrorCode = CodeCapabilityUnavailable
+	ErrorEncode          ErrorCode = CodeProtocolViolation
+	ErrorNativeCall      ErrorCode = CodeNativeLoad
+	ErrorProtocol        ErrorCode = CodeProtocolViolation
+	ErrorEngine          ErrorCode = CodeNativeUnclassified
+)
+
+func operationError(code ErrorCode, operation, message string, cause error) error {
+	return newError(code, operation, message, cause)
+}
