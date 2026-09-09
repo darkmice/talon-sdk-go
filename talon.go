@@ -16,8 +16,11 @@ package talon
 */
 import "C"
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"sync"
 	"unsafe"
 )
 
@@ -31,6 +34,7 @@ func (e *TalonError) Error() string { return e.Message }
 // DB 是 Talon 数据库客户端（嵌入式模式）。
 type DB struct {
 	handle *C.TalonHandle
+	mu     sync.RWMutex
 }
 
 // Open 打开数据库。
@@ -39,13 +43,15 @@ func Open(path string) (*DB, error) {
 	defer C.free(unsafe.Pointer(cs))
 	h := C.talon_open(cs)
 	if h == nil {
-		return nil, &TalonError{fmt.Sprintf("无法打开数据库: %s", path)}
+		return nil, operationError(ErrorNativeCall, "open", fmt.Sprintf("无法打开数据库: %s；C ABI 未提供详细错误", path), nil)
 	}
 	return &DB{handle: h}, nil
 }
 
 // Close 关闭数据库。
 func (db *DB) Close() {
+	db.mu.Lock()
+	defer db.mu.Unlock()
 	if db.handle != nil {
 		C.talon_close(db.handle)
 		db.handle = nil
@@ -54,25 +60,29 @@ func (db *DB) Close() {
 
 // Persist 刷盘。
 func (db *DB) Persist() error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
 	if db.handle == nil {
-		return &TalonError{"数据库已关闭"}
+		return operationError(ErrorClosed, "persist", "数据库已关闭", nil)
 	}
 	if C.talon_persist(db.handle) != 0 {
-		return &TalonError{"persist 失败"}
+		return operationError(ErrorNativeCall, "persist", "talon_persist 调用失败；C ABI 未提供详细错误", nil)
 	}
 	return nil
 }
 
 type cmdResult struct {
-	OK    bool            `json:"ok"`
+	OK    *bool           `json:"ok"`
 	Data  json.RawMessage `json:"data"`
 	Error string          `json:"error"`
 }
 
 // execute 执行通用命令，返回 data 原始 JSON。
 func (db *DB) execute(module, action string, params interface{}) (json.RawMessage, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
 	if db.handle == nil {
-		return nil, &TalonError{"数据库已关闭"}
+		return nil, operationError(ErrorClosed, module+"."+action, "数据库已关闭", nil)
 	}
 	if params == nil {
 		params = map[string]interface{}{}
@@ -82,30 +92,42 @@ func (db *DB) execute(module, action string, params interface{}) (json.RawMessag
 	}
 	cmdBytes, err := json.Marshal(cmd)
 	if err != nil {
-		return nil, err
+		return nil, operationError(ErrorEncode, module+"."+action, "无法编码 talon_execute 请求", err)
 	}
 	cs := C.CString(string(cmdBytes))
 	defer C.free(unsafe.Pointer(cs))
 	var outPtr *C.char
 	rc := C.talon_execute(db.handle, cs, &outPtr)
 	if rc != 0 {
-		return nil, &TalonError{"talon_execute 调用失败"}
+		return nil, operationError(ErrorNativeCall, module+"."+action, "talon_execute 调用失败；C ABI 未提供详细错误", nil)
 	}
 	if outPtr == nil {
-		return nil, &TalonError{"talon_execute 返回空指针"}
+		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 返回空指针", nil)
 	}
 	defer C.talon_free_string(outPtr)
 	outStr := C.GoString(outPtr)
 	var result cmdResult
-	if err := json.Unmarshal([]byte(outStr), &result); err != nil {
-		return nil, err
+	decoder := json.NewDecoder(bytes.NewReader([]byte(outStr)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 返回无效响应", err)
 	}
-	if !result.OK {
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 响应包含尾随 JSON", err)
+	}
+	if result.OK == nil {
+		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 响应缺少 ok 字段", nil)
+	}
+	if !*result.OK {
 		msg := result.Error
 		if msg == "" {
-			msg = "未知错误"
+			return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 失败响应缺少 error 字段", nil)
 		}
 		return nil, &TalonError{msg}
+	}
+	if len(result.Data) == 0 || bytes.Equal(bytes.TrimSpace(result.Data), []byte("null")) {
+		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 成功响应缺少 data 字段", nil)
 	}
 	return result.Data, nil
 }
