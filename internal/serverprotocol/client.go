@@ -198,6 +198,9 @@ type ServerHealth struct {
 // Health checks the remote Server health endpoint and validates its versioned
 // JSON envelope. A healthy current Server reports Status == "ok".
 func (client *ServerClient) Health(ctx context.Context) (ServerHealth, error) {
+	if !client.configured() {
+		return ServerHealth{}, newError(CodeNativeUnavailable, "server health", "server client is not configured", nil)
+	}
 	data, err := client.do(ctx, http.MethodGet, client.healthURL, nil, maxServerHealthBytes, "server health", false, true)
 	if err != nil {
 		return ServerHealth{}, err
@@ -230,10 +233,16 @@ type serverResponseEnvelope struct {
 }
 
 func (client *ServerClient) storage(ctx context.Context, action string, params any, operation string, possiblyApplied bool) ([]byte, error) {
+	if !client.configured() {
+		return nil, newError(CodeNativeUnavailable, operation, "server client is not configured", nil)
+	}
 	return client.do(ctx, http.MethodPost, client.storageURL, serverCommand{Command: "storage", Action: action, Params: params}, maxServerResponseBytes, operation, possiblyApplied, true)
 }
 
 func (client *ServerClient) kv(ctx context.Context, action string, params any, operation string, possiblyApplied bool, requireData bool) ([]byte, error) {
+	if !client.configured() {
+		return nil, newError(CodeNativeUnavailable, operation, "server client is not configured", nil)
+	}
 	return client.do(ctx, http.MethodPost, client.kvURL, serverCommand{Command: "kv", Action: action, Params: params}, maxServerResponseBytes, operation, possiblyApplied, requireData)
 }
 

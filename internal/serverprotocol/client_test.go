@@ -32,6 +32,20 @@ func newTestServerClient(t *testing.T, baseURL string) *ServerClient {
 	return client
 }
 
+func TestServerClientNilReceiverStopsAtTransportEntrypoints(t *testing.T) {
+	var client *ServerClient
+	if _, err := client.Health(context.Background()); ErrorCodeOf(err) != CodeNativeUnavailable {
+		t.Fatalf("nil health error = %v", err)
+	}
+	if _, err := client.storage(context.Background(), "conditional_batch", struct{}{}, "nil storage", true); ErrorCodeOf(err) != CodeNativeUnavailable {
+		t.Fatalf("nil storage error = %v", err)
+	}
+	if _, err := client.kv(context.Background(), "get", struct{}{}, "nil kv", false, true); ErrorCodeOf(err) != CodeNativeUnavailable {
+		t.Fatalf("nil KV error = %v", err)
+	}
+	client.Close()
+}
+
 func writeServerTestData(w http.ResponseWriter, data []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
