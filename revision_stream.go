@@ -303,35 +303,39 @@ func buildRevisionStreamAppend(request RevisionStreamAppendRequest) (builtRevisi
 	expectedMutations := make([]revisionStreamExpectedMutation, 0, len(request.sideMutations)+3)
 	mutationKeys := make(map[string]struct{}, len(request.sideMutations))
 	for index, mutation := range request.sideMutations {
-		if len(mutation.key) == 0 || len(mutation.key) > maxConditionalKeyBytes {
+		key := mutation.Key()
+		value := mutation.Value()
+		kind := mutation.MutationKind()
+		deltaValue := mutation.Delta()
+		if len(key) == 0 || len(key) > maxConditionalKeyBytes {
 			return invalid(fmt.Sprintf("side mutation %d key is invalid", index))
 		}
-		if _, exists := mutationKeys[string(mutation.key)]; exists {
+		if _, exists := mutationKeys[string(key)]; exists {
 			return invalid(fmt.Sprintf("side mutation %d repeats a mutation key", index))
 		}
-		mutationKeys[string(mutation.key)] = struct{}{}
-		wire := wireConditionalMutation{Key: presentWireBytes(mutation.key)}
-		expected := revisionStreamExpectedMutation{kind: mutation.kind, keyspace: userKeyspace, key: append([]byte(nil), mutation.key...), delta: mutation.delta}
-		switch mutation.kind {
+		mutationKeys[string(key)] = struct{}{}
+		wire := wireConditionalMutation{Key: presentWireBytes(key)}
+		expected := revisionStreamExpectedMutation{kind: kind, keyspace: userKeyspace, key: key, delta: deltaValue}
+		switch kind {
 		case conditionalPut:
-			if !addRevisionStreamSideBytes(&sideBytes, len(userKeyspace), len(mutation.key), len(mutation.value)) {
+			if !addRevisionStreamSideBytes(&sideBytes, len(userKeyspace), len(key), len(value)) {
 				return invalid("side payload exceeds 4 MiB")
 			}
 			wire.Operation = "put"
-			value := presentWireBytes(mutation.value)
-			wire.Value = &value
-			expected.value = append([]byte{}, mutation.value...)
+			wireValue := presentWireBytes(value)
+			wire.Value = &wireValue
+			expected.value = append([]byte{}, value...)
 		case conditionalDelete:
-			if !addRevisionStreamSideBytes(&sideBytes, len(userKeyspace), len(mutation.key)) {
+			if !addRevisionStreamSideBytes(&sideBytes, len(userKeyspace), len(key)) {
 				return invalid("side payload exceeds 4 MiB")
 			}
 			wire.Operation = "delete"
 		case conditionalIncrement:
-			if !addRevisionStreamSideBytes(&sideBytes, len(userKeyspace), len(mutation.key)) {
+			if !addRevisionStreamSideBytes(&sideBytes, len(userKeyspace), len(key)) {
 				return invalid("side payload exceeds 4 MiB")
 			}
 			wire.Operation = "increment"
-			delta := strconv.FormatInt(mutation.delta, 10)
+			delta := strconv.FormatInt(deltaValue, 10)
 			wire.Delta = &delta
 		default:
 			return invalid(fmt.Sprintf("side mutation %d was not created by a constructor", index))
@@ -425,7 +429,14 @@ func cloneRevisionStreamConditions(values []ConditionalTransactionCondition) []C
 func cloneRevisionStreamMutations(values []ConditionalTransactionMutation) []ConditionalTransactionMutation {
 	result := make([]ConditionalTransactionMutation, len(values))
 	for index, value := range values {
-		result[index] = ConditionalTransactionMutation{kind: value.kind, key: append([]byte(nil), value.key...), value: append([]byte{}, value.value...), delta: value.delta}
+		switch value.MutationKind() {
+		case conditionalPut:
+			result[index] = ConditionalPut(value.Key(), value.Value())
+		case conditionalDelete:
+			result[index] = ConditionalDelete(value.Key())
+		case conditionalIncrement:
+			result[index] = ConditionalIncrement(value.Key(), value.Delta())
+		}
 	}
 	return result
 }

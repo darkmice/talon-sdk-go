@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	serverprotocol "github.com/darkmice/talon-sdk-go/internal/serverprotocol"
 )
 
 func TestRevisionStreamV2CapabilityFailsClosed(t *testing.T) {
@@ -277,8 +279,8 @@ func TestRevisionStreamAppendReceiptAndRecoveryAreExact(t *testing.T) {
 	if err != nil || lookup.StreamReceipt == nil || lookup.TransactionReceipt == nil {
 		t.Fatalf("recovered lookup = %#v, %v", lookup, err)
 	}
-	genericRequest := mustBuildConditional(t, "facts", request.RequestID(), nil, []ConditionalTransactionMutation{ConditionalPut([]byte("unrelated"), []byte("value"))})
-	if _, err := decodeConditionalReceiptLookup(lookupData, genericRequest); ErrorCodeOf(err) != CodeProtocolViolation {
+	genericRequest, _ := NewConditionalTransactionRequest("facts", request.RequestID(), nil, []ConditionalTransactionMutation{ConditionalPut([]byte("unrelated"), []byte("value"))})
+	if _, err := serverprotocol.DecodeConditionalReceiptLookup(lookupData, genericRequest); ErrorCodeOf(err) != CodeProtocolViolation {
 		t.Fatalf("generic lookup accepted stream receipt: %v", err)
 	}
 	missing, _ := marshalWithoutHTMLEscape(map[string]any{"result": "receipt", "request_id": request.RequestID(), "revision": "12", "receipt": json.RawMessage(appendWire.Receipt)})

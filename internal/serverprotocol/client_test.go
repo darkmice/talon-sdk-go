@@ -1,4 +1,4 @@
-package talon
+package serverprotocol
 
 import (
 	"bytes"
