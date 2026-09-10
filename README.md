@@ -30,9 +30,33 @@ health, err := client.Health(ctx)
 
 The package owns the typed HTTP contracts for health, KV set/get/delete/
 exists/setnx, conditional transaction v2, exact receipt lookup, conditional
-point-read v1, and bounded same-snapshot read v1. The root package keeps the
-existing `talon.NewServerClient` API as a compatibility wrapper, but importing
-the root package still includes the embedded DB/cgo surface.
+point-read v1, bounded same-snapshot read v1, and leased conditional prefix-scan
+v1. The root package keeps the existing `talon.NewServerClient` API as a
+compatibility wrapper, but importing the root package still includes the
+embedded DB/cgo surface.
+
+Prefix scans use a stable request ID and an opaque, node-local continuation
+cursor. Continue only through the sealed request; `cursor_unavailable` means
+the caller must abandon that scan and begin a replacement scan with a new
+request ID. The client never silently falls back to a fresh snapshot:
+
+```go
+scan, err := server.NewConditionalPrefixScanRequest(
+    "outbox-worker-scan-1",
+    "tenant-outbox",
+    []byte("pending/"),
+    128,
+    &requiredRevision,
+)
+if err != nil {
+    return err
+}
+page, err := client.ConditionalPrefixScan(ctx, scan)
+if err != nil {
+    return err
+}
+next, ok, err := page.Continuation(scan)
+```
 
 Revision-stream operations are not part of the Server HTTP client. They remain
 embedded-DB APIs until Talon defines and releases a separately versioned HTTP

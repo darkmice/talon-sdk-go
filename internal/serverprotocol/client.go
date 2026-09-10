@@ -473,6 +473,22 @@ func (client *ServerClient) ConditionalSnapshotRead(ctx context.Context, request
 	return client.ConditionalSnapshotGet(ctx, request)
 }
 
+// ConditionalPrefixScan reads one bounded page from a Server-leased MVCC
+// snapshot. Retrying the same sealed request recovers the same page while the
+// lease is live. Continue only with request.Continue(result.NextCursor); a
+// cursor_unavailable error must not be hidden by switching to a fresh scan.
+func (client *ServerClient) ConditionalPrefixScan(ctx context.Context, request ConditionalPrefixScanRequest) (ConditionalPrefixScanResult, error) {
+	wire, err := encodeConditionalPrefixScanRequest(request)
+	if err != nil {
+		return ConditionalPrefixScanResult{}, err
+	}
+	data, err := client.storage(ctx, "conditional_prefix_scan", wire, "remote conditional prefix scan", false)
+	if err != nil {
+		return ConditionalPrefixScanResult{}, err
+	}
+	return decodeConditionalPrefixScanResult(data, request)
+}
+
 type serverKVSetParams struct {
 	Key   string  `json:"key"`
 	Value string  `json:"value"`

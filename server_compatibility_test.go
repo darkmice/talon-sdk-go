@@ -71,6 +71,23 @@ func TestRootServerClientCompatibility(t *testing.T) {
 	}
 }
 
+func TestRootConditionalPrefixScanCompatibility(t *testing.T) {
+	request, err := NewConditionalPrefixScanRequest("root-scan", "consumer", []byte("outbox/"), ConditionalPrefixScanMaxEntries, nil)
+	if err != nil || request.RequestID() != "root-scan" || request.Namespace() != "consumer" ||
+		request.Limit() != ConditionalPrefixScanMaxEntries || ConditionalPrefixScanVersion != 1 ||
+		ConditionalPrefixScanCursorTTLSeconds != 300 {
+		t.Fatalf("root prefix scan request = %#v, %v", request, err)
+	}
+	cursor, err := ParseConditionalPrefixScanCursor("0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	continued, err := request.Continue(cursor)
+	if err != nil || continued.Cursor() == nil || continued.Cursor().String() != cursor.String() {
+		t.Fatalf("root continued prefix scan request = %#v, %v", continued, err)
+	}
+}
+
 func TestEmbeddedDBConditionalCompatibilityUsesSharedProtocol(t *testing.T) {
 	db := &DB{nativeInfo: NativeInfo{
 		Features: []string{"native_conditional_transaction_v2", "conditional_transaction_command_digest_v1", "storage_conditional_point_read_v1", "storage_conditional_snapshot_read_v1"},
