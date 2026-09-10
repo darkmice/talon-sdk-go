@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ const (
 	maxConditionalItems           = 1_000_000
 	maxConditionalKeyBytes        = 65_536
 	maxConditionalValueBytes      = 1 << 20
+	conditionalRaftRequestPrefix  = "__talon_raft_noop__:"
 )
 
 var (
@@ -74,11 +76,12 @@ type ConditionalTransactionMutation struct {
 // same request is required to recover a receipt after an indeterminate
 // acknowledgement.
 type ConditionalTransactionRequest struct {
-	namespace     string
-	requestID     string
-	conditions    []ConditionalTransactionCondition
-	mutations     []ConditionalTransactionMutation
-	commandSHA256 string
+	namespace           string
+	requestID           string
+	conditions          []ConditionalTransactionCondition
+	mutations           []ConditionalTransactionMutation
+	commandSHA256       string
+	quorumCommandSHA256 string
 }
 
 func ConditionalPut(key, value []byte) ConditionalTransactionMutation {
@@ -104,12 +107,17 @@ func NewConditionalTransactionRequest(namespace, requestID string, conditions []
 	if err != nil {
 		return ConditionalTransactionRequest{}, err
 	}
+	quorumCommandSHA, err := conditionalQuorumCommandSHA(conditionalTransactionVersion, requestID, namespace, copiedConditions, copiedMutations)
+	if err != nil {
+		return ConditionalTransactionRequest{}, err
+	}
 	return ConditionalTransactionRequest{
-		namespace:     namespace,
-		requestID:     requestID,
-		conditions:    copiedConditions,
-		mutations:     copiedMutations,
-		commandSHA256: commandSHA,
+		namespace:           namespace,
+		requestID:           requestID,
+		conditions:          copiedConditions,
+		mutations:           copiedMutations,
+		commandSHA256:       commandSHA,
+		quorumCommandSHA256: quorumCommandSHA,
 	}, nil
 }
 
@@ -411,12 +419,13 @@ type wireConditionalRequest struct {
 }
 
 type builtConditionalRequest struct {
-	wire       wireConditionalRequest
-	namespace  string
-	requestID  string
-	conditions []ConditionalTransactionCondition
-	mutations  []ConditionalTransactionMutation
-	commandSHA string
+	wire             wireConditionalRequest
+	namespace        string
+	requestID        string
+	conditions       []ConditionalTransactionCondition
+	mutations        []ConditionalTransactionMutation
+	commandSHA       string
+	quorumCommandSHA string
 }
 
 func buildClosedConditionalRequest(request ConditionalTransactionRequest) (builtConditionalRequest, error) {
@@ -424,16 +433,21 @@ func buildClosedConditionalRequest(request ConditionalTransactionRequest) (built
 	if err != nil {
 		return builtConditionalRequest{}, newError(CodeInvalidArgument, "conditional transaction request", "request was not created by NewConditionalTransactionRequest", err)
 	}
-	if request.commandSHA256 == "" || request.commandSHA256 != commandSHA {
+	quorumCommandSHA, err := conditionalQuorumCommandSHA(conditionalTransactionVersion, request.requestID, request.namespace, request.conditions, request.mutations)
+	if err != nil {
+		return builtConditionalRequest{}, err
+	}
+	if request.commandSHA256 == "" || request.commandSHA256 != commandSHA || request.quorumCommandSHA256 == "" || request.quorumCommandSHA256 != quorumCommandSHA {
 		return builtConditionalRequest{}, newError(CodeInvalidArgument, "conditional transaction request", "request identity is invalid", nil)
 	}
 	return builtConditionalRequest{
-		wire:       wire,
-		namespace:  request.namespace,
-		requestID:  request.requestID,
-		conditions: request.conditions,
-		mutations:  request.mutations,
-		commandSHA: commandSHA,
+		wire:             wire,
+		namespace:        request.namespace,
+		requestID:        request.requestID,
+		conditions:       request.conditions,
+		mutations:        request.mutations,
+		commandSHA:       commandSHA,
+		quorumCommandSHA: quorumCommandSHA,
 	}, nil
 }
 
@@ -476,33 +490,40 @@ func cloneOptionalByteSlice(value []byte) []byte {
 }
 
 func buildConditionalRequest(namespace, requestID string, conditions []ConditionalTransactionCondition, mutations []ConditionalTransactionMutation) (wireConditionalRequest, string, error) {
+	return buildConditionalRequestVersion(conditionalTransactionVersion, maxConditionalValueBytes, maxNativeJSONRequestBytes, namespace, requestID, conditions, mutations)
+}
+
+func buildConditionalRequestVersion(version uint16, maxValueBytes, maxEncodedBytes int, namespace, requestID string, conditions []ConditionalTransactionCondition, mutations []ConditionalTransactionMutation) (wireConditionalRequest, string, error) {
 	if !conditionalNamespacePattern.MatchString(namespace) {
 		return wireConditionalRequest{}, "", newError(CodeInvalidArgument, "conditional transaction", "namespace must be 1-64 safe ASCII bytes", nil)
 	}
 	if !conditionalRequestIDPattern.MatchString(requestID) {
 		return wireConditionalRequest{}, "", newError(CodeInvalidArgument, "conditional transaction", "request ID must be 1-128 safe ASCII bytes", nil)
 	}
+	if strings.HasPrefix(requestID, conditionalRaftRequestPrefix) {
+		return wireConditionalRequest{}, "", newError(CodeInvalidArgument, "conditional transaction", "request ID uses the reserved Core Raft prefix", nil)
+	}
 	if len(conditions) > maxConditionalItems || len(mutations) == 0 || len(mutations) > maxConditionalItems {
 		return wireConditionalRequest{}, "", newError(CodeInvalidArgument, "conditional transaction", "condition/mutation count is invalid", nil)
 	}
 	estimatedWireBytes := int64(1_024) + int64(len(namespace)+len(requestID)) + int64(len(conditions)+len(mutations))*512
-	if estimatedWireBytes > maxNativeJSONRequestBytes {
+	if estimatedWireBytes > int64(maxEncodedBytes) {
 		return wireConditionalRequest{}, "", newError(CodeInvalidArgument, "conditional transaction", "encoded request exceeds the SDK bound", nil)
 	}
-	request := wireConditionalRequest{Version: conditionalTransactionVersion, RequestID: requestID, Namespace: namespace, Conditions: make([]wireConditionalCondition, len(conditions)), Mutations: make([]wireConditionalMutation, len(mutations))}
+	request := wireConditionalRequest{Version: version, RequestID: requestID, Namespace: namespace, Conditions: make([]wireConditionalCondition, len(conditions)), Mutations: make([]wireConditionalMutation, len(mutations))}
 	conditionKeys := make(map[string]struct{}, len(conditions))
 	for index, condition := range conditions {
-		if len(condition.Key) == 0 || len(condition.Key) > maxConditionalKeyBytes || !validCompareOperator(condition.Operator) {
+		if len(condition.Key) == 0 || len(condition.Key) > maxConditionalKeyBytes || !validCompareOperatorForVersion(version, condition.Operator) {
 			return wireConditionalRequest{}, "", newError(CodeInvalidArgument, "conditional transaction", fmt.Sprintf("condition %d is invalid", index), nil)
 		}
-		if len(condition.Expected) > maxConditionalValueBytes {
+		if len(condition.Expected) > maxValueBytes {
 			return wireConditionalRequest{}, "", newError(CodeInvalidArgument, "conditional transaction", fmt.Sprintf("condition %d expected value exceeds the SDK bound", index), nil)
 		}
 		estimatedWireBytes += wireByteArrayJSONSize(condition.Key)
 		if condition.Expected != nil {
 			estimatedWireBytes += wireByteArrayJSONSize(condition.Expected)
 		}
-		if estimatedWireBytes > maxNativeJSONRequestBytes {
+		if estimatedWireBytes > int64(maxEncodedBytes) {
 			return wireConditionalRequest{}, "", newError(CodeInvalidArgument, "conditional transaction", "encoded request exceeds the SDK bound", nil)
 		}
 		key := string(condition.Key)
@@ -525,7 +546,7 @@ func buildConditionalRequest(namespace, requestID string, conditions []Condition
 		wire := wireConditionalMutation{Key: presentWireBytes(mutation.key)}
 		switch mutation.kind {
 		case conditionalPut:
-			if len(mutation.value) > maxConditionalValueBytes {
+			if len(mutation.value) > maxValueBytes {
 				return wireConditionalRequest{}, "", newError(CodeInvalidArgument, "conditional transaction", fmt.Sprintf("mutation %d value exceeds the SDK bound", index), nil)
 			}
 			wire.Operation = "put"
@@ -544,12 +565,12 @@ func buildConditionalRequest(namespace, requestID string, conditions []Condition
 		if mutation.kind == conditionalPut {
 			estimatedWireBytes += wireByteArrayJSONSize(mutation.value)
 		}
-		if estimatedWireBytes > maxNativeJSONRequestBytes {
+		if estimatedWireBytes > int64(maxEncodedBytes) {
 			return wireConditionalRequest{}, "", newError(CodeInvalidArgument, "conditional transaction", "encoded request exceeds the SDK bound", nil)
 		}
 		request.Mutations[index] = wire
 	}
-	commandSHA, err := conditionalCommandSHA(namespace, conditions, mutations)
+	commandSHA, err := conditionalCommandSHAForVersion(version, namespace, conditions, mutations)
 	if err != nil {
 		return wireConditionalRequest{}, "", err
 	}
@@ -583,13 +604,40 @@ func validCompareOperator(operator ConditionalCompareOperator) bool {
 	}
 }
 
+func validCompareOperatorForVersion(version uint16, operator ConditionalCompareOperator) bool {
+	if !validCompareOperator(operator) {
+		return false
+	}
+	// compact_receipt_v1 exposes value identity, not byte ordering. Until Core
+	// defines independently verifiable order evidence, v3 fails closed instead
+	// of trusting a range-comparison matched flag that the SDK cannot recompute.
+	return version != conditionalTransactionCompactVersion || operator == CompareEqual || operator == CompareNotEqual
+}
+
 func conditionalCommandSHA(namespace string, conditions []ConditionalTransactionCondition, mutations []ConditionalTransactionMutation) (string, error) {
-	return conditionalCommandSHAForKeyspace("__user_conditional__."+namespace, conditions, mutations)
+	return conditionalCommandSHAForVersion(conditionalTransactionVersion, namespace, conditions, mutations)
+}
+
+func conditionalCommandSHAForVersion(version uint16, namespace string, conditions []ConditionalTransactionCondition, mutations []ConditionalTransactionMutation) (string, error) {
+	return conditionalCommandSHAForKeyspaceVersion(version, "__user_conditional__."+namespace, conditions, mutations)
 }
 
 func conditionalCommandSHAForKeyspace(keyspace string, conditions []ConditionalTransactionCondition, mutations []ConditionalTransactionMutation) (string, error) {
+	return conditionalCommandSHAForKeyspaceVersion(conditionalTransactionVersion, keyspace, conditions, mutations)
+}
+
+func conditionalCommandSHAForKeyspaceVersion(version uint16, keyspace string, conditions []ConditionalTransactionCondition, mutations []ConditionalTransactionMutation) (string, error) {
+	buffer, err := conditionalCommandBytesForKeyspaceVersion(version, keyspace, conditions, mutations)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(buffer)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func conditionalCommandBytesForKeyspaceVersion(version uint16, keyspace string, conditions []ConditionalTransactionCondition, mutations []ConditionalTransactionMutation) ([]byte, error) {
 	buffer := append([]byte(nil), []byte("TLNCTX2")...)
-	buffer = binary.LittleEndian.AppendUint16(buffer, conditionalTransactionVersion)
+	buffer = binary.LittleEndian.AppendUint16(buffer, version)
 	buffer = binary.LittleEndian.AppendUint32(buffer, uint32(len(conditions)))
 	writeBytes := func(value []byte) {
 		buffer = binary.LittleEndian.AppendUint32(buffer, uint32(len(value)))
@@ -625,11 +673,41 @@ func conditionalCommandSHAForKeyspace(keyspace string, conditions []ConditionalT
 			writeBytes(mutation.key)
 			buffer = binary.LittleEndian.AppendUint64(buffer, uint64(mutation.delta))
 		default:
-			return "", newError(CodeInvalidArgument, "conditional transaction", "invalid mutation kind", nil)
+			return nil, newError(CodeInvalidArgument, "conditional transaction", "invalid mutation kind", nil)
 		}
 	}
-	digest := sha256.Sum256(buffer)
-	return hex.EncodeToString(digest[:]), nil
+	return buffer, nil
+}
+
+// conditionalQuorumCommandSHA binds the exact Core ConsensusCommand v1 bytes.
+// This hash intentionally differs from the TLNCTX2 semantic command digest in
+// the transaction receipt because the quorum envelope also binds request_id.
+func conditionalQuorumCommandSHA(version uint16, requestID, namespace string, conditions []ConditionalTransactionCondition, mutations []ConditionalTransactionMutation) (string, error) {
+	semantic, err := conditionalCommandBytesForKeyspaceVersion(version, "__user_conditional__."+namespace, conditions, mutations)
+	if err != nil {
+		return "", err
+	}
+	const semanticDomainBytes = len("TLNCTX2")
+	operationLength := 1 + len(semantic) - semanticDomainBytes
+	commandLength := 18 + len(requestID) + operationLength
+	if len(requestID) > math.MaxUint16 || operationLength > math.MaxUint32 || (version == conditionalTransactionCompactVersion && commandLength > compactConditionalMaxCommandBytes) {
+		return "", newError(CodeInvalidArgument, "conditional transaction", "quorum command exceeds the Core encoding bound", nil)
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("TLNQ"))
+	var header [10]byte
+	binary.LittleEndian.PutUint16(header[0:2], 1) // ConsensusCommand version
+	binary.LittleEndian.PutUint16(header[2:4], 0) // reserved flags
+	binary.LittleEndian.PutUint16(header[4:6], uint16(len(requestID)))
+	binary.LittleEndian.PutUint32(header[6:10], 1) // sole storage operation
+	_, _ = hash.Write(header[:])
+	_, _ = hash.Write([]byte(requestID))
+	var operationHeader [5]byte
+	binary.LittleEndian.PutUint32(operationHeader[0:4], uint32(operationLength))
+	operationHeader[4] = 0x90 // Core Operation::StorageConditionalBatch
+	_, _ = hash.Write(operationHeader[:])
+	_, _ = hash.Write(semantic[semanticDomainBytes:])
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 type wireConditionalConflict struct {
@@ -716,7 +794,7 @@ func decodeConditionalTransactionResult(data []byte, request builtConditionalReq
 	if err := validateReceiptAgainstRequest(receipt, request.namespace, request.conditions, request.mutations); err != nil {
 		return ConditionalTransactionResult{}, protocolError("decode conditional transaction", err)
 	}
-	quorum, err := decodeOptionalQuorumReceipt(wire.QuorumReceipt, request.requestID, request.commandSHA, receiptWire, receipt.Revision)
+	quorum, err := decodeOptionalQuorumReceipt(wire.QuorumReceipt, request.requestID, request.quorumCommandSHA, receiptWire, receipt.Revision)
 	if err != nil {
 		return ConditionalTransactionResult{}, err
 	}
@@ -739,7 +817,7 @@ func decodeConditionalReceiptLookup(data []byte, request builtConditionalRequest
 		if wire.Revision.Present || len(wire.Receipt) != 0 {
 			return ConditionalReceiptLookup{}, protocolError("decode conditional receipt", fmt.Errorf("indeterminate lookup included a receipt"))
 		}
-		quorum, err := decodeOptionalQuorumReceipt(wire.QuorumReceipt, request.requestID, request.commandSHA, nil, 0)
+		quorum, err := decodeOptionalQuorumReceipt(wire.QuorumReceipt, request.requestID, request.quorumCommandSHA, nil, 0)
 		if err != nil || quorum == nil {
 			if err == nil {
 				err = protocolError("decode conditional receipt", fmt.Errorf("indeterminate lookup omitted quorum receipt"))
@@ -764,7 +842,7 @@ func decodeConditionalReceiptLookup(data []byte, request builtConditionalRequest
 		if err := validateReceiptAgainstRequest(receipt, request.namespace, request.conditions, request.mutations); err != nil {
 			return ConditionalReceiptLookup{}, protocolError("decode conditional receipt", err)
 		}
-		quorum, err := decodeOptionalQuorumReceipt(wire.QuorumReceipt, request.requestID, request.commandSHA, receiptWire, receipt.Revision)
+		quorum, err := decodeOptionalQuorumReceipt(wire.QuorumReceipt, request.requestID, request.quorumCommandSHA, receiptWire, receipt.Revision)
 		if err != nil {
 			return ConditionalReceiptLookup{}, err
 		}

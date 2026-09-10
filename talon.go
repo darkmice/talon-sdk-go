@@ -198,6 +198,13 @@ type cmdResult struct {
 
 // execute 执行通用命令，返回 data 原始 JSON。
 func (db *DB) execute(module, action string, params interface{}) (json.RawMessage, error) {
+	return db.executeWithBounds(module, action, params, maxNativeJSONRequestBytes, maxNativeJSONResultBytes)
+}
+
+func (db *DB) executeWithBounds(module, action string, params interface{}, requestLimit, resultLimit int) (json.RawMessage, error) {
+	if requestLimit <= 0 || resultLimit <= 0 {
+		return nil, newError(CodeInvalidArgument, "execute", "native JSON bounds must be positive", nil)
+	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.handle == nil {
@@ -213,7 +220,7 @@ func (db *DB) execute(module, action string, params interface{}) (json.RawMessag
 	if err != nil {
 		return nil, operationError(ErrorEncode, module+"."+action, "无法编码 talon_execute 请求", err)
 	}
-	if len(cmdBytes) > maxNativeJSONRequestBytes {
+	if len(cmdBytes) > requestLimit {
 		return nil, newError(CodeInvalidArgument, "execute", "native JSON request exceeds the SDK bound", nil)
 	}
 	cs := C.CString(string(cmdBytes))
@@ -228,7 +235,7 @@ func (db *DB) execute(module, action string, params interface{}) (json.RawMessag
 		return nil, newError(CodeProtocolViolation, "execute", "talon_execute returned a null result", nil)
 	}
 	defer C.talon_sdk_free_string(outPtr)
-	outBytes, err := boundedCString(outPtr, maxNativeJSONResultBytes)
+	outBytes, err := boundedCString(outPtr, resultLimit)
 	if err != nil {
 		return nil, newError(CodeProtocolViolation, "execute", "native JSON response exceeds the SDK bound or is unterminated", err)
 	}
@@ -299,6 +306,18 @@ func cloneNativeCapabilities(capabilities []NativeCapability) []NativeCapability
 			reason := *capability.Reason
 			result[index].Reason = &reason
 		}
+		if capability.Limits != nil {
+			result[index].Limits = &NativeCapabilityLimits{
+				MaxValueBytes:                  cloneUint64Pointer(capability.Limits.MaxValueBytes),
+				MaxAggregateCommandBytes:       cloneUint64Pointer(capability.Limits.MaxAggregateCommandBytes),
+				MaxCompactReceiptBytes:         cloneUint64Pointer(capability.Limits.MaxCompactReceiptBytes),
+				MaxRequestBytes:                cloneUint64Pointer(capability.Limits.MaxRequestBytes),
+				MaxResponseBytes:               cloneUint64Pointer(capability.Limits.MaxResponseBytes),
+				MaxSnapshotValueBytes:          cloneUint64Pointer(capability.Limits.MaxSnapshotValueBytes),
+				MaxSnapshotAggregateValueBytes: cloneUint64Pointer(capability.Limits.MaxSnapshotAggregateValueBytes),
+				present:                        capability.Limits.present,
+			}
+		}
 	}
 	return result
 }
@@ -346,6 +365,9 @@ func (db *DB) RequireCapability(name string) error {
 		return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("%s is %s%s", name, coreCapability.Status, reason), nil)
 	}
 	if name == "native_conditional_transaction_v2" && containsString(db.nativeInfo.Features, name) && containsString(db.nativeInfo.Features, "conditional_transaction_command_digest_v1") {
+		return nil
+	}
+	if name == compactConditionalCapability && coreCapability.Version == conditionalTransactionCompactVersion && validCompactConditionalLimits(coreCapability.Limits) && containsString(db.nativeInfo.Features, compactConditionalCapability) && containsString(db.nativeInfo.Features, compactReceiptFeature) && containsString(db.nativeInfo.Features, "conditional_transaction_command_digest_v1") {
 		return nil
 	}
 	if name == "storage_conditional_point_read" && coreCapability.Version == conditionalPointReadVersion && containsString(db.nativeInfo.Features, "storage_conditional_point_read_v1") {

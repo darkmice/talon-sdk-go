@@ -91,10 +91,85 @@ type NativeInfo struct {
 
 // NativeCapability is reported by the loaded Core build manifest.
 type NativeCapability struct {
-	Name    string  `json:"name"`
-	Version int     `json:"version"`
-	Status  string  `json:"status"`
-	Reason  *string `json:"reason,omitempty"`
+	Name    string                  `json:"name"`
+	Version int                     `json:"version"`
+	Status  string                  `json:"status"`
+	Reason  *string                 `json:"reason,omitempty"`
+	Limits  *NativeCapabilityLimits `json:"limits,omitempty"`
+}
+
+// NativeCapabilityLimits are artifact-bound runtime bounds. Pointer fields
+// preserve the difference between an omitted limit and an explicit zero.
+type NativeCapabilityLimits struct {
+	MaxValueBytes                  *uint64 `json:"max_value_bytes,omitempty"`
+	MaxAggregateCommandBytes       *uint64 `json:"max_aggregate_command_bytes,omitempty"`
+	MaxCompactReceiptBytes         *uint64 `json:"max_compact_receipt_bytes,omitempty"`
+	MaxRequestBytes                *uint64 `json:"max_request_bytes,omitempty"`
+	MaxResponseBytes               *uint64 `json:"max_response_bytes,omitempty"`
+	MaxSnapshotValueBytes          *uint64 `json:"max_snapshot_value_bytes,omitempty"`
+	MaxSnapshotAggregateValueBytes *uint64 `json:"max_snapshot_aggregate_value_bytes,omitempty"`
+	present                        nativeCapabilityLimitFields
+}
+
+type nativeCapabilityLimitFields uint8
+
+const (
+	limitMaxValueBytes nativeCapabilityLimitFields = 1 << iota
+	limitMaxAggregateCommandBytes
+	limitMaxCompactReceiptBytes
+	limitMaxRequestBytes
+	limitMaxResponseBytes
+	limitMaxSnapshotValueBytes
+	limitMaxSnapshotAggregateValueBytes
+)
+
+// UnmarshalJSON preserves field presence so the draft v3 admission contract
+// can distinguish an omitted unrelated limit from an explicit JSON null.
+func (limits *NativeCapabilityLimits) UnmarshalJSON(data []byte) error {
+	type wireLimits NativeCapabilityLimits
+	var decoded wireLimits
+	if err := decodeStrictJSON(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	presence := nativeCapabilityLimitFields(0)
+	for name := range fields {
+		switch name {
+		case "max_value_bytes":
+			presence |= limitMaxValueBytes
+		case "max_aggregate_command_bytes":
+			presence |= limitMaxAggregateCommandBytes
+		case "max_compact_receipt_bytes":
+			presence |= limitMaxCompactReceiptBytes
+		case "max_request_bytes":
+			presence |= limitMaxRequestBytes
+		case "max_response_bytes":
+			presence |= limitMaxResponseBytes
+		case "max_snapshot_value_bytes":
+			presence |= limitMaxSnapshotValueBytes
+		case "max_snapshot_aggregate_value_bytes":
+			presence |= limitMaxSnapshotAggregateValueBytes
+		}
+	}
+	*limits = NativeCapabilityLimits(decoded)
+	limits.present = presence
+	return nil
+}
+
+func validCompactConditionalLimits(limits *NativeCapabilityLimits) bool {
+	const unrelated = limitMaxRequestBytes | limitMaxResponseBytes | limitMaxSnapshotValueBytes | limitMaxSnapshotAggregateValueBytes
+	return limits != nil &&
+		limits.MaxValueBytes != nil && *limits.MaxValueBytes == compactConditionalMaxValueBytes &&
+		limits.MaxAggregateCommandBytes != nil && *limits.MaxAggregateCommandBytes == compactConditionalMaxCommandBytes &&
+		limits.MaxCompactReceiptBytes != nil && *limits.MaxCompactReceiptBytes == compactConditionalMaxReceiptBytes &&
+		limits.present&unrelated == 0 &&
+		limits.MaxRequestBytes == nil &&
+		limits.MaxResponseBytes == nil &&
+		limits.MaxSnapshotValueBytes == nil &&
+		limits.MaxSnapshotAggregateValueBytes == nil
 }
 
 // CapabilityGate is copied from the signed feature set.
@@ -477,7 +552,7 @@ func validateNativePolicy(policy NativePolicy) error {
 	}
 	seen := map[string]struct{}{}
 	for _, capability := range policy.RequiredCapabilities {
-		if capability != "storage_conditional_batch_v1" && capability != "storage_conditional_point_read" && capability != "storage_conditional_snapshot_read" && capability != "revision_stream" {
+		if capability != "storage_conditional_batch_v1" && capability != "storage_conditional_point_read" && capability != "storage_conditional_snapshot_read" && capability != "revision_stream" && capability != compactConditionalCapability {
 			return fmt.Errorf("unknown required native capability %q", capability)
 		}
 		if _, exists := seen[capability]; exists {
@@ -939,6 +1014,14 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 	if !ok || conditionalV2.Version != 2 || conditionalV2.Status != "available" {
 		return build, fmt.Errorf("native_conditional_transaction_v2 is not available to this SDK")
 	}
+	conditionalV3, hasConditionalV3 := capabilities[compactConditionalCapability]
+	conditionalV3Feature := containsString(build.Features, compactConditionalCapability)
+	compactReceiptV1Feature := containsString(build.Features, compactReceiptFeature)
+	if hasConditionalV3 || conditionalV3Feature || compactReceiptV1Feature {
+		if !hasConditionalV3 || !conditionalV3Feature || !compactReceiptV1Feature || conditionalV3.Version != conditionalTransactionCompactVersion || !validCompactConditionalLimits(conditionalV3.Limits) {
+			return build, fmt.Errorf("%s capability does not match the SDK v3 %s draft contract", compactConditionalCapability, compactReceiptFeature)
+		}
+	}
 	if revisionStream, ok := capabilities["revision_stream"]; ok {
 		if revisionStream.Version != revisionStreamVersion || !containsString(build.Features, "revision_stream_v1") || !containsString(build.Features, "revision_stream_v2_mmr_proof") {
 			return build, fmt.Errorf("revision_stream capability does not match the SDK v2 authenticated-proof contract")
@@ -966,7 +1049,7 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 
 func verifyRequiredRuntimeCapabilities(build coreBuildManifest, required []string) error {
 	for _, name := range required {
-		if name != "revision_stream" && name != "storage_conditional_point_read" && name != "storage_conditional_snapshot_read" {
+		if name != "revision_stream" && name != "storage_conditional_point_read" && name != "storage_conditional_snapshot_read" && name != compactConditionalCapability {
 			continue
 		}
 		var found *NativeCapability
@@ -981,8 +1064,10 @@ func verifyRequiredRuntimeCapabilities(build coreBuildManifest, required []strin
 			available = found != nil && found.Version == revisionStreamVersion && found.Status == "available" && containsString(build.Features, "revision_stream_v1") && containsString(build.Features, "revision_stream_v2_mmr_proof")
 		} else if name == "storage_conditional_point_read" {
 			available = found != nil && found.Version == conditionalPointReadVersion && found.Status == "available" && containsString(build.Features, "storage_conditional_point_read_v1")
-		} else {
+		} else if name == "storage_conditional_snapshot_read" {
 			available = found != nil && found.Version == conditionalSnapshotReadVersion && found.Status == "available" && containsString(build.Features, "storage_conditional_snapshot_read_v1")
+		} else {
+			available = found != nil && found.Version == conditionalTransactionCompactVersion && found.Status == "available" && validCompactConditionalLimits(found.Limits) && containsString(build.Features, compactConditionalCapability) && containsString(build.Features, compactReceiptFeature) && containsString(build.Features, "conditional_transaction_command_digest_v1")
 		}
 		if !available {
 			reason := ""
@@ -1011,6 +1096,13 @@ func computeBuildBinding(build coreBuildManifest) string {
 	for _, value := range build.Features {
 		bindBuildField(hash, value)
 	}
+	bindCapabilityLimits := false
+	for _, capability := range build.Capabilities {
+		if capability.Limits != nil {
+			bindCapabilityLimits = true
+			break
+		}
+	}
 	for _, capability := range build.Capabilities {
 		bindBuildField(hash, capability.Name)
 		bindBuildField(hash, strconv.Itoa(capability.Version))
@@ -1020,6 +1112,13 @@ func computeBuildBinding(build coreBuildManifest) string {
 			reason = *capability.Reason
 		}
 		bindBuildField(hash, reason)
+		if bindCapabilityLimits {
+			limits, err := json.Marshal(capability.Limits)
+			if err != nil {
+				return ""
+			}
+			bindBuildField(hash, string(limits))
+		}
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }

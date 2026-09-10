@@ -54,11 +54,13 @@ TALON_NATIVE_EXPECTED_HEADER_SHA256
 required signed feature that is gated, or not implemented by this SDK version,
 prevents startup. Recognized values are `storage_conditional_batch_v1`,
 `storage_conditional_point_read`, `storage_conditional_snapshot_read`, and
-`revision_stream`. The point-read requires Core's
+`revision_stream`, plus the compile-ahead draft
+`native_conditional_transaction_v3`. The point-read requires Core's
 `storage_conditional_point_read_v1`; same-snapshot multi-key reads require
 `storage_conditional_snapshot_read_v1`; revision streams require both
 `revision_stream_v1` and `revision_stream_v2_mmr_proof` from the artifact-bound
-runtime self-manifest.
+runtime self-manifest. Requiring v3 additionally checks its complete feature
+tuple and exact compact-receipt limits at startup.
 
 ```go
 db, err := talon.Open("path/to/db")
@@ -180,6 +182,34 @@ never executed, so it does not authorize rebinding the request ID or retrying a
 different payload. `ConditionalIncrement` is an exact signed i64 counter
 operation; monetary values that require decimal precision must remain canonical
 bytes and must not be converted to i64 or `float64` for this API.
+
+### Conditional transaction v3 compact receipt (draft)
+
+The SDK also exposes an explicit draft v3 surface for terminal values up to
+8 MiB: `NewConditionalTransactionV3Request`,
+`ExecuteConditionalTransactionV3`, and
+`ConditionalTransactionV3ReceiptFor`. Its receipt keeps `before` and `after`
+null and carries `before_compact` / `after_compact` value identities instead:
+presence, byte length, and SHA-256. Increment observations additionally retain
+canonical `before_i64` / `after_i64` strings. The command digest still binds
+every input byte and receipt recovery still requires the exact sealed request.
+
+This is a compile-ahead contract, not a released Core capability. Calls require
+Core to self-attest `native_conditional_transaction_v3` version 3,
+`compact_receipt_v1`, and `conditional_transaction_command_digest_v1`; the
+capability must also bind the draft 8 MiB value, 32 MiB binary command, and
+16 MiB compact-receipt limits. The bundled v0.3.0 native artifacts do not do so,
+and calls fail closed before native execution. The normal 16 MiB response bound
+remains unchanged. A v3-only 40 MiB JSON request bound admits one 8 MiB
+high-byte octet array plus its envelope; it does not weaken other SDK
+operations, but still needs native C-ABI E2E evidence before this draft can
+merge.
+
+Only `eq` and `ne` conditions are admitted by this draft. Presence, length, and
+SHA-256 are enough to recompute equality but cannot independently prove bytewise
+ordering, so `lt`, `le`, `gt`, and `ge` are rejected instead of trusting Core's
+`matched` flag. See [the draft contract](docs/conditional-transaction-v3.md) for
+the adjustable boundaries that Core must freeze before release.
 
 ### Conditional point reads
 
@@ -382,7 +412,6 @@ for callers that need the legacy raw result shape.
 The exact bundled native artifacts, platforms, ABI header hash and provenance
 boundary are recorded in [native-manifest.json](native-manifest.json).
 
-General conditional KV transactions are intentionally not emulated in this
-SDK. `KvSetNX` retains its existing single-key semantics; it is not a substitute
-for multi-key compare-and-swap. Consumers that need conditional transactions
-must wait for a clean pinned Core revision and complete native matrix.
+Conditional transactions are never emulated with `KvSetNX`, process locks, or
+read-then-write. Production use still requires a clean pinned Core revision and
+a complete signed native matrix for the selected version.

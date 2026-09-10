@@ -67,6 +67,10 @@ func makeAppliedConditionalWire(t *testing.T, revision uint64, quorum bool) ([]b
 		Applied: &applied, Duplicate: &duplicate, Revision: canonicalUint64{Value: revision, Present: true}, Receipt: receiptJSON,
 	}
 	if quorum {
+		quorumCommandSHA, quorumErr := conditionalQuorumCommandSHA(conditionalTransactionVersion, "req-1", "n", conditions, mutations)
+		if quorumErr != nil {
+			t.Fatal(quorumErr)
+		}
 		canonicalReceipt, canonicalErr := conditionalReceiptCanonicalJSON(receipt, receipt.ReceiptSHA256)
 		if canonicalErr != nil {
 			t.Fatal(canonicalErr)
@@ -75,7 +79,7 @@ func makeAppliedConditionalWire(t *testing.T, revision uint64, quorum bool) ([]b
 		result.QuorumReceipt, err = marshalWithoutHTMLEscape(wireQuorumReceipt{
 			Version: 1, RequestID: "req-1", Index: canonicalUint64{Value: revision, Present: true},
 			Term: canonicalUint64{Value: 9_007_199_254_740_993, Present: true}, Stage: string(QuorumReceiptApplied),
-			Durability: string(QuorumDurabilityQuorumFsync), CommandSHA256: commandSHA, ResultSHA256: rawJSON(`"` + hex.EncodeToString(resultDigest[:]) + `"`),
+			Durability: string(QuorumDurabilityQuorumFsync), CommandSHA256: quorumCommandSHA, ResultSHA256: rawJSON(`"` + hex.EncodeToString(resultDigest[:]) + `"`),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -189,6 +193,19 @@ func TestConditionalCommandEncodingMatchesCoreGolden(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(`"key":[1]`)) || !bytes.Contains(data, []byte(`"delta":"-1"`)) || bytes.Contains(data, []byte("AQ==")) {
 		t.Fatalf("request did not preserve Core byte-array/canonical-i64 wire: %s", data)
+	}
+}
+
+func TestConditionalQuorumCommandEncodingMatchesCoreGolden(t *testing.T) {
+	conditions := []ConditionalTransactionCondition{{Key: []byte{1}, Expected: nil, Operator: CompareEqual}}
+	mutations := []ConditionalTransactionMutation{ConditionalIncrement([]byte{2}, -1)}
+	digest, err := conditionalQuorumCommandSHA(conditionalTransactionVersion, "req-1", "n", conditions, mutations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const expected = "6b2656bc60eeca7a149ab904620f4f29a5c7e964638ecdde03ba2b89da888828"
+	if digest != expected {
+		t.Fatalf("quorum command SHA = %s, want Core ConsensusCommand golden %s", digest, expected)
 	}
 }
 
@@ -461,7 +478,7 @@ func TestConditionalReceiptLookupIndeterminateIsTyped(t *testing.T) {
 	quorum, err := marshalWithoutHTMLEscape(wireQuorumReceipt{
 		Version: 1, RequestID: "req-1", Index: canonicalUint64{Value: math.MaxUint64, Present: true},
 		Term: canonicalUint64{Value: 9_007_199_254_740_993, Present: true}, Stage: string(QuorumReceiptCommitted),
-		Durability: string(QuorumDurabilityQuorumFsync), CommandSHA256: request.commandSHA, ResultSHA256: rawJSON("null"),
+		Durability: string(QuorumDurabilityQuorumFsync), CommandSHA256: request.quorumCommandSHA, ResultSHA256: rawJSON("null"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -667,6 +684,9 @@ func TestConditionalTransactionRequestIsSealedAndBounded(t *testing.T) {
 	}
 	if _, err := buildClosedConditionalRequest(ConditionalTransactionRequest{}); ErrorCodeOf(err) != CodeInvalidArgument {
 		t.Fatalf("zero request error = %v", err)
+	}
+	if _, err := NewConditionalTransactionRequest("tenant", conditionalRaftRequestPrefix+"node:1", nil, []ConditionalTransactionMutation{ConditionalPut([]byte("value"), []byte("new"))}); ErrorCodeOf(err) != CodeInvalidArgument {
+		t.Fatalf("reserved Raft request ID error = %v", err)
 	}
 
 	largeValue := bytes.Repeat([]byte{255}, maxConditionalValueBytes)

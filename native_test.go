@@ -211,7 +211,7 @@ func TestOpenFailsClosedWithoutNativePolicy(t *testing.T) {
 
 func TestRuntimeCapabilitiesMayBeRequiredButAreDeferredToRuntimeAttestation(t *testing.T) {
 	policy := testNativePolicy(t)
-	policy.RequiredCapabilities = []string{"storage_conditional_point_read", "revision_stream"}
+	policy.RequiredCapabilities = []string{"storage_conditional_point_read", "revision_stream", compactConditionalCapability}
 	if err := validateNativePolicy(policy); err != nil {
 		t.Fatalf("runtime capability policy was not recognized: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestRuntimeCapabilitiesMayBeRequiredButAreDeferredToRuntimeAttestation(t *t
 		t.Fatalf("external bundle verification rejected deferred runtime gate: %v", err)
 	}
 	t.Cleanup(func() { _ = removeVerifiedNative(verified) })
-	if len(verified.requiredCapabilities) != 2 || verified.requiredCapabilities[0] != "storage_conditional_point_read" || verified.requiredCapabilities[1] != "revision_stream" {
+	if len(verified.requiredCapabilities) != 3 || verified.requiredCapabilities[0] != "storage_conditional_point_read" || verified.requiredCapabilities[1] != "revision_stream" || verified.requiredCapabilities[2] != compactConditionalCapability {
 		t.Fatalf("required runtime capabilities were not retained: %#v", verified.requiredCapabilities)
 	}
 }
@@ -344,11 +344,13 @@ func TestVerifiedNativeIdentityAndCapabilityGate(t *testing.T) {
 	if err := db.RequireStableNativeErrorCodes(); err != nil {
 		t.Fatalf("self-attested native error-code feature was rejected: %v", err)
 	}
-	db.nativeInfo.Capabilities = []NativeCapability{{Name: "example", Version: 1, Status: "gated"}}
+	maxValue := uint64(compactConditionalMaxValueBytes)
+	db.nativeInfo.Capabilities = []NativeCapability{{Name: "example", Version: 1, Status: "gated", Limits: &NativeCapabilityLimits{MaxValueBytes: &maxValue}}}
 	copy := db.NativeInfo()
 	copy.Features[0] = "tampered"
 	copy.Capabilities[0].Name = "tampered"
-	if db.nativeInfo.Features[0] != "native_error_codes_v1" || db.nativeInfo.Capabilities[0].Name != "example" {
+	*copy.Capabilities[0].Limits.MaxValueBytes = 1
+	if db.nativeInfo.Features[0] != "native_error_codes_v1" || db.nativeInfo.Capabilities[0].Name != "example" || *db.nativeInfo.Capabilities[0].Limits.MaxValueBytes != compactConditionalMaxValueBytes {
 		t.Fatal("NativeInfo returned mutable internal slices")
 	}
 }
@@ -421,6 +423,18 @@ func TestCoreBuildIdentityCrossChecksSignedManifest(t *testing.T) {
 	data, _ = json.Marshal(build)
 	if _, err := verifyCoreBuildIdentity(data, verified); err == nil {
 		t.Fatal("Core identity differing from the signed manifest was accepted")
+	}
+}
+
+func TestLegacyBuildBindingGoldenRemainsStable(t *testing.T) {
+	const raw = `{"manifest_version":1,"core_semver":"0.3.0","git_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","git_dirty":false,"target":"aarch64-apple-darwin","cargo_lock_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","header_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","abi":{"profile":"talon-native-c","version":1,"required_symbols":["talon_open"]},"features":["native_build_manifest_v1","native_conditional_transaction_v2","conditional_transaction_command_digest_v1"],"capabilities":[{"name":"native_conditional_transaction_v2","version":2,"status":"available"}],"build_binding_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}`
+	var build coreBuildManifest
+	if err := decodeStrictJSON([]byte(raw), &build); err != nil {
+		t.Fatal(err)
+	}
+	const expected = "7ce92ee259c206f588a0d541bcf617b6b05f941578a4ba8eca28c949672c82c5"
+	if actual := computeBuildBinding(build); actual != expected {
+		t.Fatalf("legacy build binding = %s, want v1-algorithm golden %s", actual, expected)
 	}
 }
 
