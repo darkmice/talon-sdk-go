@@ -1,4 +1,4 @@
-package talon
+package serverprotocol
 
 import (
 	"bytes"
@@ -712,17 +712,6 @@ func TestConditionalRequestDigestBindsExactRetryAndFailedIncrementDelta(t *testi
 		t.Fatalf("lookup accepted failed increment receipt for another delta: %v", err)
 	}
 
-	db := &DB{nativeInfo: NativeInfo{
-		Features:     []string{"native_conditional_transaction_v2", "conditional_transaction_command_digest_v1"},
-		Capabilities: []NativeCapability{{Name: "native_conditional_transaction_v2", Version: 2, Status: "available"}},
-	}}
-	request, _ := NewConditionalTransactionRequest("tenant", "same-id", nil, []ConditionalTransactionMutation{ConditionalIncrement([]byte("counter"), 1)})
-	if _, err := db.ConditionalTransactionReceiptFor(request); ErrorCodeOf(err) != CodeDatabaseClosed {
-		t.Fatalf("receipt-for did not reach the native boundary with an exact request: %v", err)
-	}
-	if _, err := db.ConditionalTransactionReceipt(request); ErrorCodeOf(err) != CodeDatabaseClosed {
-		t.Fatalf("receipt compatibility alias diverged: %v", err)
-	}
 }
 
 func TestCanonicalIntegerWireAcceptsExtremesAndRejectsLossyForms(t *testing.T) {
@@ -742,22 +731,6 @@ func TestCanonicalIntegerWireAcceptsExtremesAndRejectsLossyForms(t *testing.T) {
 		var decoded canonicalUint64
 		if err := decodeStrictJSON([]byte(invalid), &decoded); err == nil {
 			t.Fatalf("invalid canonical u64 %s was accepted", invalid)
-		}
-	}
-}
-
-func TestConditionalCapabilityRequiresSelfAttestedFeature(t *testing.T) {
-	db := &DB{nativeInfo: NativeInfo{
-		Features:     []string{"native_conditional_transaction_v2", "conditional_transaction_command_digest_v1"},
-		Capabilities: []NativeCapability{{Name: "native_conditional_transaction_v2", Version: 2, Status: "available"}},
-	}}
-	if err := db.RequireCapability("native_conditional_transaction_v2"); err != nil {
-		t.Fatalf("available self-attested v2 capability was rejected: %v", err)
-	}
-	for _, features := range [][]string{{"native_conditional_transaction_v2"}, {"conditional_transaction_command_digest_v1"}, nil} {
-		db.nativeInfo.Features = features
-		if err := db.RequireCapability("native_conditional_transaction_v2"); ErrorCodeOf(err) != CodeCapabilityUnavailable {
-			t.Fatalf("v2 with incomplete feature set %v error = %v", features, err)
 		}
 	}
 }
@@ -794,20 +767,5 @@ func TestConditionalRequestValidation(t *testing.T) {
 				t.Fatalf("invalid request error = %v", err)
 			}
 		})
-	}
-}
-
-func TestConditionalTransactionRejectsDuplicateKeysBeforeNative(t *testing.T) {
-	db := &DB{}
-	if _, err := db.ConditionalTransaction("n", "r", nil, []ConditionalTransactionMutation{ConditionalPut(nil, nil)}); ErrorCodeOf(err) != CodeInvalidArgument {
-		t.Fatalf("empty key should fail before native access: %v", err)
-	}
-	conditions := []ConditionalTransactionCondition{{Key: []byte("same"), Operator: CompareEqual}, {Key: append([]byte(nil), []byte("same")...), Operator: CompareNotEqual}}
-	if _, err := db.ConditionalTransaction("n", "r", conditions, []ConditionalTransactionMutation{ConditionalPut([]byte("key"), nil)}); ErrorCodeOf(err) != CodeInvalidArgument {
-		t.Fatalf("duplicate condition should fail before native access: %v", err)
-	}
-	mutations := []ConditionalTransactionMutation{ConditionalPut([]byte("same"), nil), ConditionalDelete(append([]byte(nil), []byte("same")...))}
-	if _, err := db.ConditionalTransaction("n", "r", nil, mutations); ErrorCodeOf(err) != CodeInvalidArgument {
-		t.Fatalf("duplicate mutation should fail before native access: %v", err)
 	}
 }

@@ -1,4 +1,4 @@
-package talon
+package serverprotocol
 
 import (
 	"bytes"
@@ -152,41 +152,6 @@ func TestConditionalPointReadRequestIsClosedAndCapabilityGated(t *testing.T) {
 		}
 	}
 
-	reason := "cross-target conformance pending"
-	db := &DB{nativeInfo: NativeInfo{
-		Features:     []string{"storage_conditional_point_read_v1"},
-		Capabilities: []NativeCapability{{Name: "storage_conditional_point_read", Version: conditionalPointReadVersion, Status: "gated", Reason: &reason}},
-	}}
-	if err := db.RequireCapability("storage_conditional_point_read"); ErrorCodeOf(err) != CodeCapabilityUnavailable {
-		t.Fatalf("gated point-read error = %v", err)
-	}
-	db.nativeInfo.Capabilities[0].Status, db.nativeInfo.Capabilities[0].Reason = "available", nil
-	if err := db.RequireCapability("storage_conditional_point_read"); err != nil {
-		t.Fatalf("available point-read rejected: %v", err)
-	}
-	if _, err := db.ConditionalGet(request); ErrorCodeOf(err) != CodeDatabaseClosed {
-		t.Fatalf("ConditionalGet did not reach native conditional_get boundary: %v", err)
-	}
-	if _, err := db.ConditionalPointRead(request); ErrorCodeOf(err) != CodeDatabaseClosed {
-		t.Fatalf("ConditionalPointRead compatibility alias diverged: %v", err)
-	}
-	build := coreBuildManifest{Features: []string{"storage_conditional_point_read_v1"}, Capabilities: []NativeCapability{{Name: "storage_conditional_point_read", Version: 1, Status: "available"}}}
-	if err := verifyRequiredRuntimeCapabilities(build, []string{"storage_conditional_point_read"}); err != nil {
-		t.Fatalf("available required point-read rejected: %v", err)
-	}
-	build.Capabilities[0].Status, build.Capabilities[0].Reason = "gated", &reason
-	if err := verifyRequiredRuntimeCapabilities(build, []string{"storage_conditional_point_read"}); err == nil {
-		t.Fatal("gated required point-read passed runtime attestation")
-	}
-	for _, invalid := range []NativeInfo{
-		{Capabilities: []NativeCapability{{Name: "storage_conditional_point_read", Version: 1, Status: "available"}}},
-		{Features: []string{"storage_conditional_point_read_v1"}, Capabilities: []NativeCapability{{Name: "storage_conditional_point_read", Version: 2, Status: "available"}}},
-	} {
-		db.nativeInfo = invalid
-		if err := db.RequireCapability("storage_conditional_point_read"); ErrorCodeOf(err) != CodeCapabilityUnavailable {
-			t.Fatalf("invalid point-read capability passed: %#v, %v", invalid, err)
-		}
-	}
 }
 
 func TestPointReadNullableCanonicalUint64RequiresNullOrCanonicalString(t *testing.T) {

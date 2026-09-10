@@ -5,7 +5,7 @@
  * See the LICENSE file in the project root for full license information.
  */
 
-package talon
+package serverprotocol
 
 import (
 	"bytes"
@@ -162,32 +162,6 @@ func TestConditionalSnapshotReadRequestIsClosedAndCapabilityGated(t *testing.T) 
 	}
 	if _, err := buildConditionalSnapshotReadRequest(ConditionalSnapshotReadRequest{}); ErrorCodeOf(err) != CodeInvalidArgument {
 		t.Fatalf("zero snapshot request error = %v", err)
-	}
-	reason := "cross-target conformance pending"
-	db := &DB{nativeInfo: NativeInfo{
-		Features:     []string{"storage_conditional_snapshot_read_v1"},
-		Capabilities: []NativeCapability{{Name: "storage_conditional_snapshot_read", Version: conditionalSnapshotReadVersion, Status: "gated", Reason: &reason}},
-	}}
-	if err := db.RequireCapability("storage_conditional_snapshot_read"); ErrorCodeOf(err) != CodeCapabilityUnavailable {
-		t.Fatalf("gated snapshot-read error = %v", err)
-	}
-	db.nativeInfo.Capabilities[0].Status, db.nativeInfo.Capabilities[0].Reason = "available", nil
-	if err := db.RequireCapability("storage_conditional_snapshot_read"); err != nil {
-		t.Fatalf("available snapshot-read rejected: %v", err)
-	}
-	if _, err := db.ConditionalSnapshotGet(request); ErrorCodeOf(err) != CodeDatabaseClosed {
-		t.Fatalf("ConditionalSnapshotGet did not reach native boundary: %v", err)
-	}
-	if _, err := db.ConditionalSnapshotRead(request); ErrorCodeOf(err) != CodeDatabaseClosed {
-		t.Fatalf("ConditionalSnapshotRead alias diverged: %v", err)
-	}
-	build := coreBuildManifest{Features: []string{"storage_conditional_snapshot_read_v1"}, Capabilities: []NativeCapability{{Name: "storage_conditional_snapshot_read", Version: 1, Status: "available"}}}
-	if err := verifyRequiredRuntimeCapabilities(build, []string{"storage_conditional_snapshot_read"}); err != nil {
-		t.Fatalf("available required snapshot-read rejected: %v", err)
-	}
-	build.Capabilities[0].Status, build.Capabilities[0].Reason = "gated", &reason
-	if err := verifyRequiredRuntimeCapabilities(build, []string{"storage_conditional_snapshot_read"}); err == nil {
-		t.Fatal("gated required snapshot-read passed runtime attestation")
 	}
 }
 

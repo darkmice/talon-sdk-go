@@ -2,6 +2,43 @@
 
 Go bindings for the Talon embedded database engine.
 
+## Remote Server client without cgo
+
+Server-only applications should import the dedicated pure-Go package. It does
+not compile or link the embedded database or native Talon library, and is
+verified in CI with `CGO_ENABLED=0`:
+
+```go
+import (
+    "time"
+
+    server "github.com/darkmice/talon-sdk-go/server"
+)
+
+client, err := server.NewServerClient(server.ServerClientConfig{
+    BaseURL: "https://talon.internal.example",
+    Token:   token,
+    Timeout: 10 * time.Second,
+})
+if err != nil {
+    return err
+}
+defer client.Close()
+
+health, err := client.Health(ctx)
+```
+
+The package owns the typed HTTP contracts for health, KV set/get/delete/
+exists/setnx, conditional transaction v2, exact receipt lookup, conditional
+point-read v1, and bounded same-snapshot read v1. The root package keeps the
+existing `talon.NewServerClient` API as a compatibility wrapper, but importing
+the root package still includes the embedded DB/cgo surface.
+
+Revision-stream operations are not part of the Server HTTP client. They remain
+embedded-DB APIs until Talon defines and releases a separately versioned HTTP
+transport contract; the Server package does not emulate them with repeated
+point or snapshot reads.
+
 ## Security boundary
 
 Production native code is not selected from a tag, `latest` URL, linker search

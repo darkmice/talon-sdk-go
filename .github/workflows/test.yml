@@ -24,3 +24,12 @@ jobs:
         env:
           GOWORK: off
         run: go test -ldflags=-linkmode=external ./...
+      - name: Test cgo-free Server client
+        env:
+          CGO_ENABLED: 0
+          GOWORK: off
+        run: go test ./server/... ./internal/serverprotocol
+      - name: Vet
+        env:
+          GOWORK: off
+        run: go vet ./...
