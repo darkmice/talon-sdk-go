@@ -1,4 +1,4 @@
-//go:build linux && amd64
+//go:build darwin && amd64
 
 /*
  * Copyright (c) 2026 Talon Contributors
@@ -11,6 +11,5 @@ package talon
 
 /*
 #cgo CFLAGS: -std=c11
-#cgo LDFLAGS: -ldl -lpthread
 */
 import "C"

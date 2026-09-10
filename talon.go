@@ -6,46 +6,161 @@
  */
 // Package talon 提供 Talon 数据库的 Go SDK。
 //
-// 通过 cgo 封装 talon_execute C ABI。预编译原生库（include/ 和 lib/）随
-// 模块一起发布，go get 后即可直接编译，无需额外下载步骤。
+// 通过 cgo 动态加载经过 talon-native-manifest-v1 验证的 Core 原生库。
 package talon
 
 /*
 #include <stdlib.h>
-#include "include/talon.h"
+#include "native_loader.h"
 */
 import "C"
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
+	"math"
+	"os"
+	"strings"
 	"sync"
+	"unicode/utf8"
 	"unsafe"
 )
 
-// TalonError 表示 Talon 操作错误。
-type TalonError struct {
-	Message string
-}
-
-func (e *TalonError) Error() string { return e.Message }
-
 // DB 是 Talon 数据库客户端（嵌入式模式）。
 type DB struct {
-	handle *C.TalonHandle
-	mu     sync.RWMutex
+	mu         sync.RWMutex
+	handle     *C.TalonSDKHandle
+	nativeInfo NativeInfo
 }
 
-// Open 打开数据库。
+// OpenOptions contains trusted native-runtime configuration.
+type OpenOptions struct {
+	Native NativePolicy
+}
+
+var (
+	nativeLoadMu sync.Mutex
+	loadedNative *verifiedNative
+)
+
+// Open opens a database using the fail-closed native policy from environment.
+// Missing or incomplete trust configuration is an error; there is no unsigned
+// library fallback.
 func Open(path string) (*DB, error) {
+	policy, err := NativePolicyFromEnvironment()
+	if err != nil {
+		return nil, newError(CodeNativeVerification, "open", "native trust policy is incomplete", err)
+	}
+	return OpenWithOptions(path, OpenOptions{Native: policy})
+}
+
+// OpenWithOptions verifies the signed native bundle before dlopen and before a
+// Core database handle is created.
+func OpenWithOptions(path string, options OpenOptions) (*DB, error) {
+	if path == "" || strings.IndexByte(path, 0) >= 0 || !utf8.ValidString(path) {
+		return nil, newError(CodeInvalidArgument, "open", "database path is empty, contains NUL, or is not UTF-8", nil)
+	}
+	verified, err := ensureNativeLoaded(options.Native)
+	if err != nil {
+		return nil, err
+	}
 	cs := C.CString(path)
 	defer C.free(unsafe.Pointer(cs))
-	h := C.talon_open(cs)
+	var errorCode [128]C.char
+	h := C.talon_sdk_open(cs, &errorCode[0], C.size_t(len(errorCode)))
 	if h == nil {
-		return nil, operationError(ErrorNativeCall, "open", fmt.Sprintf("无法打开数据库: %s；C ABI 未提供详细错误", path), nil)
+		return nil, nativeFailure("open", fmt.Sprintf("failed to open database at %s", path), C.GoString(&errorCode[0]))
 	}
-	return &DB{handle: h}, nil
+	return &DB{handle: h, nativeInfo: verified.Info}, nil
+}
+
+func ensureNativeLoaded(policy NativePolicy) (*verifiedNative, error) {
+	nativeLoadMu.Lock()
+	defer nativeLoadMu.Unlock()
+	policyHash := hashNativePolicy(policy)
+	if loadedNative != nil {
+		if loadedNative.policyHash != policyHash {
+			return nil, newError(CodeNativeVerification, "load native library", "a different native trust policy is already active in this process", nil)
+		}
+		return loadedNative, nil
+	}
+	verified, err := verifyNativeBundle(policy)
+	if err != nil {
+		return nil, newError(CodeNativeVerification, "verify native bundle", "native bundle verification failed", err)
+	}
+	libraryPath := C.CString(verified.LibraryPath)
+	rc := C.talon_sdk_load(libraryPath)
+	C.free(unsafe.Pointer(libraryPath))
+	if rc != 0 {
+		message := "dynamic loader rejected the verified native library"
+		if diagnostic := C.talon_sdk_loader_error(); diagnostic != nil {
+			message += ": " + C.GoString(diagnostic)
+		}
+		_ = removeVerifiedNative(verified)
+		return nil, newError(CodeNativeLoad, "load native library", message, nil)
+	}
+	if err := attestLoadedNative(verified); err != nil {
+		C.talon_sdk_unload()
+		_ = removeVerifiedNative(verified)
+		return nil, newError(CodeNativeVerification, "attest loaded native library", "Core runtime identity does not match the signed artifact manifest", err)
+	}
+	loadedNative = verified
+	return verified, nil
+}
+
+func removeVerifiedNative(verified *verifiedNative) error {
+	if verified == nil || verified.tempDir == "" {
+		return nil
+	}
+	return os.RemoveAll(verified.tempDir)
+}
+
+func attestLoadedNative(verified *verifiedNative) error {
+	var output *C.char
+	var errorCode [128]C.char
+	if C.talon_sdk_build_manifest(&output, &errorCode[0], C.size_t(len(errorCode))) != 0 {
+		return fmt.Errorf("talon_build_manifest failed with machine code %q", C.GoString(&errorCode[0]))
+	}
+	if output == nil {
+		return fmt.Errorf("talon_build_manifest returned a null result")
+	}
+	defer C.talon_sdk_free_string(output)
+	data, err := boundedCString(output, maxManifestBytes)
+	if err != nil {
+		return fmt.Errorf("read Core build manifest: %w", err)
+	}
+	build, err := verifyCoreBuildIdentity(data, verified)
+	if err != nil {
+		return err
+	}
+	if err := verifyRequiredRuntimeCapabilities(build, verified.requiredCapabilities); err != nil {
+		return err
+	}
+	for _, symbol := range verified.Manifest.ABI.RequiredSymbols {
+		name := C.CString(symbol)
+		present := C.talon_sdk_has_symbol(name) != 0
+		C.free(unsafe.Pointer(name))
+		if !present {
+			return fmt.Errorf("loaded Core omitted required symbol %q", symbol)
+		}
+	}
+	verified.Info.Features = append([]string(nil), build.Features...)
+	verified.Info.Capabilities = cloneNativeCapabilities(build.Capabilities)
+	return nil
+}
+
+func boundedCString(value *C.char, maxLength int) ([]byte, error) {
+	if value == nil || maxLength < 0 {
+		return nil, fmt.Errorf("C string pointer or bound is invalid")
+	}
+	var length C.size_t
+	if C.talon_sdk_bounded_strlen(value, C.size_t(maxLength), &length) != 0 {
+		return nil, fmt.Errorf("C string is not NUL-terminated within %d bytes", maxLength)
+	}
+	if uint64(length) > uint64(maxLength) || uint64(length) > math.MaxInt32 {
+		return nil, fmt.Errorf("C string exceeds the Go copy bound")
+	}
+	return C.GoBytes(unsafe.Pointer(value), C.int(length)), nil
 }
 
 // Close 关闭数据库。
@@ -53,7 +168,7 @@ func (db *DB) Close() {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	if db.handle != nil {
-		C.talon_close(db.handle)
+		C.talon_sdk_close(db.handle)
 		db.handle = nil
 	}
 }
@@ -63,18 +178,22 @@ func (db *DB) Persist() error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.handle == nil {
-		return operationError(ErrorClosed, "persist", "数据库已关闭", nil)
+		return newError(CodeDatabaseClosed, "persist", "database is closed", nil)
 	}
-	if C.talon_persist(db.handle) != 0 {
-		return operationError(ErrorNativeCall, "persist", "talon_persist 调用失败；C ABI 未提供详细错误", nil)
+	var errorCode [128]C.char
+	if C.talon_sdk_persist(db.handle, &errorCode[0], C.size_t(len(errorCode))) != 0 {
+		return nativeFailure("persist", "native persist failed", C.GoString(&errorCode[0]))
 	}
 	return nil
 }
 
 type cmdResult struct {
-	OK    *bool           `json:"ok"`
-	Data  json.RawMessage `json:"data"`
-	Error string          `json:"error"`
+	OK         *bool           `json:"ok"`
+	Data       json.RawMessage `json:"data"`
+	Code       string          `json:"code"`
+	Error      string          `json:"error"`
+	Term       *uint64         `json:"term"`
+	LeaderHint json.RawMessage `json:"leader_hint"`
 }
 
 // execute 执行通用命令，返回 data 原始 JSON。
@@ -82,7 +201,7 @@ func (db *DB) execute(module, action string, params interface{}) (json.RawMessag
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.handle == nil {
-		return nil, operationError(ErrorClosed, module+"."+action, "数据库已关闭", nil)
+		return nil, newError(CodeDatabaseClosed, "execute", "database is closed", nil)
 	}
 	if params == nil {
 		params = map[string]interface{}{}
@@ -94,42 +213,155 @@ func (db *DB) execute(module, action string, params interface{}) (json.RawMessag
 	if err != nil {
 		return nil, operationError(ErrorEncode, module+"."+action, "无法编码 talon_execute 请求", err)
 	}
+	if len(cmdBytes) > maxNativeJSONRequestBytes {
+		return nil, newError(CodeInvalidArgument, "execute", "native JSON request exceeds the SDK bound", nil)
+	}
 	cs := C.CString(string(cmdBytes))
 	defer C.free(unsafe.Pointer(cs))
 	var outPtr *C.char
-	rc := C.talon_execute(db.handle, cs, &outPtr)
+	var errorCode [128]C.char
+	rc := C.talon_sdk_execute(db.handle, cs, &outPtr, &errorCode[0], C.size_t(len(errorCode)))
 	if rc != 0 {
-		return nil, operationError(ErrorNativeCall, module+"."+action, "talon_execute 调用失败；C ABI 未提供详细错误", nil)
+		return nil, nativeFailure("execute", "talon_execute failed", C.GoString(&errorCode[0]))
 	}
 	if outPtr == nil {
-		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 返回空指针", nil)
+		return nil, newError(CodeProtocolViolation, "execute", "talon_execute returned a null result", nil)
 	}
-	defer C.talon_free_string(outPtr)
-	outStr := C.GoString(outPtr)
+	defer C.talon_sdk_free_string(outPtr)
+	outBytes, err := boundedCString(outPtr, maxNativeJSONResultBytes)
+	if err != nil {
+		return nil, newError(CodeProtocolViolation, "execute", "native JSON response exceeds the SDK bound or is unterminated", err)
+	}
 	var result cmdResult
-	decoder := json.NewDecoder(bytes.NewReader([]byte(outStr)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&result); err != nil {
-		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 返回无效响应", err)
-	}
-	var trailing interface{}
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 响应包含尾随 JSON", err)
+	if err := decodeStrictJSON(outBytes, &result); err != nil {
+		return nil, newError(CodeProtocolViolation, "execute", "invalid native JSON response", err)
 	}
 	if result.OK == nil {
-		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 响应缺少 ok 字段", nil)
+		return nil, newError(CodeProtocolViolation, "execute", "native JSON response omitted ok", nil)
 	}
 	if !*result.OK {
+		if len(result.Data) != 0 {
+			return nil, newError(CodeProtocolViolation, "execute", "failed native response included data", nil)
+		}
 		msg := result.Error
 		if msg == "" {
-			return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 失败响应缺少 error 字段", nil)
+			msg = "native operation failed without a diagnostic"
 		}
-		return nil, &TalonError{msg}
+		leaderHint, err := decodeNativeLeaderHint(result.LeaderHint)
+		if err != nil {
+			return nil, newError(CodeProtocolViolation, "execute", "native error response included an invalid leader_hint", err)
+		}
+		return nil, newNativeResponseError("execute", msg, result.Code, result.Term, leaderHint)
+	}
+	if len(result.Data) == 0 {
+		return nil, newError(CodeProtocolViolation, "execute", "successful native response omitted data", nil)
+	}
+	if result.Code != "" || result.Error != "" || result.Term != nil || len(result.LeaderHint) != 0 {
+		return nil, newError(CodeProtocolViolation, "execute", "successful native response mixed error fields into its envelope", nil)
 	}
 	if len(result.Data) == 0 || bytes.Equal(bytes.TrimSpace(result.Data), []byte("null")) {
 		return nil, operationError(ErrorProtocol, module+"."+action, "talon_execute 成功响应缺少 data 字段", nil)
 	}
 	return result.Data, nil
+}
+
+func decodeNativeLeaderHint(data json.RawMessage) (*NativeLeaderHint, error) {
+	if len(data) == 0 || string(data) == "null" {
+		return nil, nil
+	}
+	var hint NativeLeaderHint
+	if err := decodeStrictJSON(data, &hint); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(hint.NodeID) == "" || hint.Address == nil || strings.TrimSpace(*hint.Address) == "" {
+		return nil, fmt.Errorf("leader_hint requires non-empty node_id and address")
+	}
+	return &hint, nil
+}
+
+// NativeInfo returns the verified signed identity used by this DB.
+func (db *DB) NativeInfo() NativeInfo {
+	info := db.nativeInfo
+	info.Features = append([]string(nil), db.nativeInfo.Features...)
+	info.Capabilities = cloneNativeCapabilities(db.nativeInfo.Capabilities)
+	info.Gates = make(map[string]CapabilityGate, len(db.nativeInfo.Gates))
+	for name, gate := range db.nativeInfo.Gates {
+		info.Gates[name] = gate
+	}
+	return info
+}
+
+func cloneNativeCapabilities(capabilities []NativeCapability) []NativeCapability {
+	result := make([]NativeCapability, len(capabilities))
+	for index, capability := range capabilities {
+		result[index] = capability
+		if capability.Reason != nil {
+			reason := *capability.Reason
+			result[index].Reason = &reason
+		}
+	}
+	return result
+}
+
+// CapabilityGate returns the signed gate state without treating it as an
+// implemented SDK operation.
+func (db *DB) CapabilityGate(name string) (CapabilityGate, bool) {
+	gate, ok := db.nativeInfo.Gates[name]
+	return gate, ok
+}
+
+// RequireStableNativeErrorCodes is the explicit error-ABI gate. Diagnostic
+// text is intentionally insufficient.
+func (db *DB) RequireStableNativeErrorCodes() error {
+	if containsString(db.nativeInfo.Features, "native_error_codes_v1") {
+		return nil
+	}
+	return ErrStableNativeErrorCodesUnavailable
+}
+
+// RequireCapability enforces both the signed Core feature gate and this SDK's
+// implementation gate. No capability is inferred from a tag or symbol text.
+func (db *DB) RequireCapability(name string) error {
+	if gate, ok := db.nativeInfo.Gates[name]; ok && gate.Status != "available" {
+		return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("%s is %s: %s", name, gate.Status, gate.Reason), nil)
+	}
+	if name == "storage_conditional_batch_v1" {
+		return ErrStorageConditionalBatchUnavailable
+	}
+	var coreCapability *NativeCapability
+	for index := range db.nativeInfo.Capabilities {
+		if db.nativeInfo.Capabilities[index].Name == name {
+			coreCapability = &db.nativeInfo.Capabilities[index]
+			break
+		}
+	}
+	if coreCapability == nil {
+		return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("loaded Core did not attest capability %q", name), nil)
+	}
+	if coreCapability.Status != "available" {
+		reason := ""
+		if coreCapability.Reason != nil {
+			reason = ": " + *coreCapability.Reason
+		}
+		return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("%s is %s%s", name, coreCapability.Status, reason), nil)
+	}
+	if name == "native_conditional_transaction_v2" && containsString(db.nativeInfo.Features, name) && containsString(db.nativeInfo.Features, "conditional_transaction_command_digest_v1") {
+		return nil
+	}
+	if name == "storage_conditional_point_read" && coreCapability.Version == conditionalPointReadVersion && containsString(db.nativeInfo.Features, "storage_conditional_point_read_v1") {
+		return nil
+	}
+	if name == "storage_conditional_snapshot_read" && coreCapability.Version == conditionalSnapshotReadVersion && containsString(db.nativeInfo.Features, "storage_conditional_snapshot_read_v1") {
+		return nil
+	}
+	if name == "revision_stream" && coreCapability.Version == revisionStreamVersion && containsString(db.nativeInfo.Features, "revision_stream_v1") && containsString(db.nativeInfo.Features, "revision_stream_v2_mmr_proof") {
+		return nil
+	}
+	return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("capability %q is not implemented by this SDK", name), nil)
+}
+
+func nativeFailure(operation, fallback, nativeCode string) error {
+	return newNativeError(operation, fallback, nativeCode)
 }
 
 // Stats 获取引擎统计信息。
@@ -144,14 +376,18 @@ func (db *DB) Stats() (map[string]interface{}, error) {
 
 // SQL 执行 SQL 语句。
 func (db *DB) SQL(query string) ([][]interface{}, error) {
-	data, err := db.execute("sql", "", map[string]string{"sql": query})
+	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
 	}
-	var out struct {
-		Rows [][]interface{} `json:"rows"`
+	out := make([][]interface{}, len(rows))
+	for rowIndex, row := range rows {
+		out[rowIndex] = make([]interface{}, len(row))
+		for columnIndex, value := range row {
+			out[rowIndex][columnIndex] = value.GoValue()
+		}
 	}
-	return out.Rows, json.Unmarshal(data, &out)
+	return out, nil
 }
 
 // ── KV ──
