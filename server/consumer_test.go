@@ -20,6 +20,7 @@ type publicServerClient interface {
 	ConditionalTransactionReceiptFor(context.Context, server.ConditionalTransactionRequest) (server.ConditionalReceiptLookup, error)
 	ConditionalGet(context.Context, server.ConditionalPointReadRequest) (server.ConditionalPointReadResult, error)
 	ConditionalSnapshotGet(context.Context, server.ConditionalSnapshotReadRequest) (server.ConditionalSnapshotReadResult, error)
+	ConditionalPrefixScan(context.Context, server.ConditionalPrefixScanRequest) (server.ConditionalPrefixScanResult, error)
 }
 
 var _ publicServerClient = (*server.ServerClient)(nil)
@@ -43,6 +44,20 @@ func TestExternalConsumerBuildsWithoutRootPackage(t *testing.T) {
 	if err != nil || request.CommandSHA256() == "" {
 		t.Fatalf("sealed request = %#v, %v", request, err)
 	}
+	prefixScan, err := server.NewConditionalPrefixScanRequest("consumer-scan", "consumer", []byte("outbox/"), server.ConditionalPrefixScanMaxEntries, nil)
+	if err != nil || prefixScan.RequestID() != "consumer-scan" || prefixScan.Namespace() != "consumer" ||
+		prefixScan.Limit() != server.ConditionalPrefixScanMaxEntries || server.ConditionalPrefixScanVersion != 1 ||
+		server.ConditionalPrefixScanCursorTTLSeconds != 300 {
+		t.Fatalf("sealed prefix scan request = %#v, %v", prefixScan, err)
+	}
+	cursor, err := server.ParseConditionalPrefixScanCursor("0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	continued, err := prefixScan.Continue(cursor)
+	if err != nil || continued.Cursor() == nil || continued.Cursor().String() != cursor.String() {
+		t.Fatalf("continued prefix scan request = %#v, %v", continued, err)
+	}
 }
 
 func TestNilClientReturnsTypedUnavailableForEveryPublicOperation(t *testing.T) {
@@ -58,6 +73,10 @@ func TestNilClientReturnsTypedUnavailableForEveryPublicOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot, err := server.NewConditionalSnapshotReadRequest("consumer", [][]byte{[]byte("key")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefixScan, err := server.NewConditionalPrefixScanRequest("nil-client-scan", "consumer", []byte("outbox/"), 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,6 +107,7 @@ func TestNilClientReturnsTypedUnavailableForEveryPublicOperation(t *testing.T) {
 		{name: "conditional point read", call: func() error { _, err := client.ConditionalGet(context.Background(), point); return err }},
 		{name: "conditional snapshot read alias", call: func() error { _, err := client.ConditionalSnapshotRead(context.Background(), snapshot); return err }},
 		{name: "conditional snapshot read", call: func() error { _, err := client.ConditionalSnapshotGet(context.Background(), snapshot); return err }},
+		{name: "conditional prefix scan", call: func() error { _, err := client.ConditionalPrefixScan(context.Background(), prefixScan); return err }},
 		{name: "KV set", call: func() error { return client.KvSet(context.Background(), "key", "value", nil) }},
 		{name: "KV get", call: func() error { _, err := client.KvGet(context.Background(), "key"); return err }},
 		{name: "KV delete", call: func() error { _, err := client.KvDel(context.Background(), "key"); return err }},

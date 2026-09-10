@@ -35,6 +35,9 @@ const (
 	CodeNativeInvalidRequest     = protocol.CodeNativeInvalidRequest
 	CodeNativeRequestTooLarge    = protocol.CodeNativeRequestTooLarge
 	CodeNativeResultTooLarge     = protocol.CodeNativeResultTooLarge
+	CodeNativeCursorMismatch     = protocol.CodeNativeCursorMismatch
+	CodeNativeCursorUnavailable  = protocol.CodeNativeCursorUnavailable
+	CodeNativeResourceExhausted  = protocol.CodeNativeResourceExhausted
 	CodeNativeCorruptState       = protocol.CodeNativeCorruptState
 	CodeNativeStorage            = protocol.CodeNativeStorage
 	CodeNativeUnsupportedAction  = protocol.CodeNativeUnsupportedAction
@@ -119,6 +122,23 @@ type ConditionalPointReadResult = protocol.ConditionalPointReadResult
 type ConditionalSnapshotReadRequest = protocol.ConditionalSnapshotReadRequest
 type ConditionalSnapshotReadObservation = protocol.ConditionalSnapshotReadObservation
 type ConditionalSnapshotReadResult = protocol.ConditionalSnapshotReadResult
+type ConditionalPrefixScanCursor = protocol.ConditionalPrefixScanCursor
+type ConditionalPrefixScanRequest = protocol.ConditionalPrefixScanRequest
+type ConditionalPrefixScanEntry = protocol.ConditionalPrefixScanEntry
+type ConditionalPrefixScanResult = protocol.ConditionalPrefixScanResult
+
+const (
+	ConditionalPrefixScanVersion           = 1
+	ConditionalPrefixScanMaxEntries        = 256
+	ConditionalPrefixScanMaxPrefixBytes    = 8 << 10
+	ConditionalPrefixScanMaxKeyBytes       = 64 << 10
+	ConditionalPrefixScanMaxRequestBytes   = 64 << 10
+	ConditionalPrefixScanMaxValueBytes     = 3 << 20
+	ConditionalPrefixScanMaxPageValueBytes = 8 << 20
+	ConditionalPrefixScanMaxResponseBytes  = 16 << 20
+	ConditionalPrefixScanMaxActiveCursors  = 4_096
+	ConditionalPrefixScanCursorTTLSeconds  = 300
+)
 
 func NewServerClient(config ServerClientConfig) (*ServerClient, error) {
 	return protocol.NewServerClient(config)
@@ -140,4 +160,10 @@ func NewConditionalPointReadRequest(namespace string, key []byte, requiredRevisi
 }
 func NewConditionalSnapshotReadRequest(namespace string, keys [][]byte, requiredRevision *uint64) (ConditionalSnapshotReadRequest, error) {
 	return protocol.NewConditionalSnapshotReadRequest(namespace, keys, requiredRevision)
+}
+func ParseConditionalPrefixScanCursor(value string) (ConditionalPrefixScanCursor, error) {
+	return protocol.ParseConditionalPrefixScanCursor(value)
+}
+func NewConditionalPrefixScanRequest(requestID, namespace string, prefix []byte, limit uint16, requiredRevision *uint64) (ConditionalPrefixScanRequest, error) {
+	return protocol.NewConditionalPrefixScanRequest(requestID, namespace, prefix, limit, requiredRevision)
 }

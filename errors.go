@@ -43,6 +43,9 @@ const (
 	CodeNativeInvalidRequest     = serverapi.CodeNativeInvalidRequest
 	CodeNativeRequestTooLarge    = serverapi.CodeNativeRequestTooLarge
 	CodeNativeResultTooLarge     = serverapi.CodeNativeResultTooLarge
+	CodeNativeCursorMismatch     = serverapi.CodeNativeCursorMismatch
+	CodeNativeCursorUnavailable  = serverapi.CodeNativeCursorUnavailable
+	CodeNativeResourceExhausted  = serverapi.CodeNativeResourceExhausted
 	CodeNativeCorruptState       = serverapi.CodeNativeCorruptState
 	CodeNativeStorage            = serverapi.CodeNativeStorage
 	CodeNativeUnsupportedAction  = serverapi.CodeNativeUnsupportedAction
@@ -107,6 +110,12 @@ func newNativeError(operation, message, nativeCode string) error {
 		code = CodeNativeRequestTooLarge
 	case "result_too_large":
 		code = CodeNativeResultTooLarge
+	case "cursor_mismatch":
+		code = CodeNativeCursorMismatch
+	case "cursor_unavailable":
+		code = CodeNativeCursorUnavailable
+	case "resource_exhausted":
+		code = CodeNativeResourceExhausted
 	case "corrupt_state":
 		code = CodeNativeCorruptState
 	case "storage_error":
