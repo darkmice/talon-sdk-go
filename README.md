@@ -31,9 +31,9 @@ health, err := client.Health(ctx)
 The package owns the typed HTTP contracts for health, KV set/get/delete/
 exists/setnx, conditional transaction v2, exact receipt lookup, conditional
 point-read v1, bounded same-snapshot read v1, and leased conditional prefix-scan
-v1. The root package keeps the existing `talon.NewServerClient` API as a
-compatibility wrapper, but importing the root package still includes the
-embedded DB/cgo surface.
+v1, plus the versioned SQL/query surface with exact DECIMAL. The root package
+keeps the existing `talon.NewServerClient` API as a compatibility wrapper, but
+importing the root package still includes the embedded DB/cgo surface.
 
 Prefix scans use a stable request ID and an opaque, node-local continuation
 cursor. Continue only through the sealed request; `cursor_unavailable` means
@@ -62,6 +62,93 @@ Revision-stream operations are not part of the Server HTTP client. They remain
 embedded-DB APIs until Talon defines and releases a separately versioned HTTP
 transport contract; the Server package does not emulate them with repeated
 point or snapshot reads.
+
+### Server SQL and exact DECIMAL
+
+`ServerClient.Query` sends one versioned SQL statement over `POST /api/sql`.
+The payload version (`ServerSQLVersion`, currently 1) travels as
+`params.protocol_version` and must be echoed by the remote Server: a Server that
+does not echo it is treated as not attesting the versioned surface and the
+response is rejected. Because the statement may have mutated state, the primary
+classification is `CodeResultIndeterminate`; `CodeProtocolViolation` remains a
+wrapped cause available through `errors.Is`.
+
+Core accepts both reads and writes through this endpoint and does not expose a
+trustworthy read-only discriminator. Therefore any transport, truncation, or
+malformed-response failure after a SQL request is sent is reported as
+`CodeResultIndeterminate`; callers must not interpret it as proof that a
+mutation did not happen.
+
+`Decimal` is exact end to end — a `big.Int` coefficient plus a retained scale,
+never a `float64`. Precision and scale are bounded by `MaxDecimalPrecision`
+(38), matching Core's `DECIMAL_MAX_PRECISION` and the embedded path. The JSON
+representation is the canonical decimal string fixed by talon-core issue #12:
+
+```json
+{"Decimal":"9999999999999999999999999999999999.9999"}
+```
+
+A 38-digit coefficient cannot be carried by a JSON number (i64/u64/f64 only),
+so numeric payloads are rejected instead of being silently degraded. Out-of-
+range literals, exponent notation, non-integer coefficients, and float
+coefficients are refused before any request is sent.
+
+```go
+amount, err := server.ParseDecimal("9999999999999999999999999999999999.9999")
+if err != nil {
+    return err
+}
+value, err := server.DecimalValue(amount)
+if err != nil {
+    return err
+}
+
+request, err := server.NewQueryRequest(
+    "SELECT SUM(amount) FROM ledger WHERE account = ?",
+    value,
+)
+if err != nil {
+    return err
+}
+
+result, err := client.Query(ctx, request)
+if err != nil {
+    return err
+}
+total, ok := result.Decimal(0, 0) // exact; never float64
+```
+
+### Server SQL capability gate
+
+The SQL surface is **gated**. `server.ServerSQLCapability()` reports
+`Status: "gated"` because the cgo-free client has no signed manifest to read,
+and the SDK never infers availability from the endpoint, a release tag, or a
+symbol name. `Query` therefore fails closed with `CodeCapabilityUnavailable` and
+never contacts the network until the caller supplies an explicit, out-of-band
+attestation that a released `talon-bin` artifact attests the surface:
+
+```go
+client, err := server.NewServerClient(server.ServerClientConfig{
+    BaseURL: "https://talon.internal.example",
+    Token:   token,
+    Timeout: 10 * time.Second,
+    ServerSQLAttestation: &server.ServerSQLAttestation{
+        Capability:     server.ServerSQLDecimalCapability, // "server_sql_decimal_v1"
+        Version:        server.ServerSQLVersion,
+        ReleaseTag:     verifiedReleaseTag,
+        TalonBinCommit: verifiedTalonBinCommit,
+        CoreCommit:     verifiedCoreCommit,
+        ArtifactSHA256: verifiedServerArtifactSHA256,
+    },
+})
+```
+
+`ServerSQLAttestation` is validated exactly and must bind an immutable `vX.Y.Z`
+release, full lowercase talon-bin/Core commits, and the deployed artifact's
+SHA-256. A partial, development, mismatched, or malformed identity is rejected
+at construction. The caller must verify that exact artifact and endpoint out of
+band before supplying it. Until such an artifact exists, the correct state is
+`gated`: this SDK does not mark the surface available on the Server's behalf.
 
 ## Security boundary
 

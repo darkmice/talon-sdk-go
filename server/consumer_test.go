@@ -113,6 +113,14 @@ func TestNilClientReturnsTypedUnavailableForEveryPublicOperation(t *testing.T) {
 		{name: "KV delete", call: func() error { _, err := client.KvDel(context.Background(), "key"); return err }},
 		{name: "KV exists", call: func() error { _, err := client.KvExists(context.Background(), "key"); return err }},
 		{name: "KV setnx", call: func() error { _, err := client.KvSetNX(context.Background(), "key", "value", nil); return err }},
+		{name: "SQL query", call: func() error {
+			request, err := server.NewQueryRequest("SELECT 1")
+			if err != nil {
+				return err
+			}
+			_, err = client.Query(context.Background(), request)
+			return err
+		}},
 	}
 	for _, operation := range operations {
 		t.Run(operation.name, func(t *testing.T) {
