@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	conditionalSnapshotReadVersion        = 1
-	maxConditionalSnapshotReadKeys        = 128
+	conditionalSnapshotReadVersionV1      = 1
+	conditionalSnapshotReadVersionV2      = 2
+	maxConditionalSnapshotReadKeysV1      = 128
+	maxConditionalSnapshotReadKeysV2      = 256
 	maxConditionalSnapshotValueBytes      = 3 << 20
 	maxConditionalSnapshotTotalValueBytes = 8 << 20
 	maxConditionalSnapshotRequestBytes    = 512 << 10
@@ -28,6 +30,7 @@ const (
 // same-MVCC-snapshot observation of several unique keys. RequiredRevision is
 // a lower bound, not an exact historical-read selector.
 type ConditionalSnapshotReadRequest struct {
+	version          uint16
 	namespace        string
 	keys             [][]byte
 	requiredRevision *uint64
@@ -36,11 +39,26 @@ type ConditionalSnapshotReadRequest struct {
 // NewConditionalSnapshotReadRequest validates and copies a same-snapshot key
 // set. Keys are ordered and the order is part of the response digest.
 func NewConditionalSnapshotReadRequest(namespace string, keys [][]byte, requiredRevision *uint64) (ConditionalSnapshotReadRequest, error) {
+	return newConditionalSnapshotReadRequest(conditionalSnapshotReadVersionV1, namespace, keys, requiredRevision)
+}
+
+// NewConditionalSnapshotReadRequestV2 validates and copies a version 2
+// same-snapshot key set. Version 2 increases only the single-call key bound;
+// it is not pagination or a historical snapshot handle.
+func NewConditionalSnapshotReadRequestV2(namespace string, keys [][]byte, requiredRevision *uint64) (ConditionalSnapshotReadRequest, error) {
+	return newConditionalSnapshotReadRequest(conditionalSnapshotReadVersionV2, namespace, keys, requiredRevision)
+}
+
+func newConditionalSnapshotReadRequest(version uint16, namespace string, keys [][]byte, requiredRevision *uint64) (ConditionalSnapshotReadRequest, error) {
 	if !conditionalNamespacePattern.MatchString(namespace) {
 		return ConditionalSnapshotReadRequest{}, newError(CodeInvalidArgument, "conditional snapshot read", "namespace must be 1-64 safe ASCII bytes", nil)
 	}
-	if len(keys) == 0 || len(keys) > maxConditionalSnapshotReadKeys {
-		return ConditionalSnapshotReadRequest{}, newError(CodeInvalidArgument, "conditional snapshot read", "key count must be in 1..128", nil)
+	maxKeys, ok := conditionalSnapshotReadMaxKeys(version)
+	if !ok {
+		return ConditionalSnapshotReadRequest{}, newError(CodeInvalidArgument, "conditional snapshot read", "version must be 1 or 2", nil)
+	}
+	if len(keys) == 0 || len(keys) > maxKeys {
+		return ConditionalSnapshotReadRequest{}, newError(CodeInvalidArgument, "conditional snapshot read", fmt.Sprintf("version %d key count must be in 1..%d", version, maxKeys), nil)
 	}
 	copiedKeys := make([][]byte, len(keys))
 	seen := make(map[string]struct{}, len(keys))
@@ -59,13 +77,19 @@ func NewConditionalSnapshotReadRequest(namespace string, keys [][]byte, required
 	if requiredRevision != nil && *requiredRevision == 0 {
 		return ConditionalSnapshotReadRequest{}, newError(CodeInvalidArgument, "conditional snapshot read", "required revision must be greater than zero", nil)
 	}
-	return ConditionalSnapshotReadRequest{
+	request := ConditionalSnapshotReadRequest{
+		version:          version,
 		namespace:        namespace,
 		keys:             copiedKeys,
 		requiredRevision: cloneUint64Pointer(requiredRevision),
-	}, nil
+	}
+	if err := validateConditionalSnapshotReadRequestSize(request); err != nil {
+		return ConditionalSnapshotReadRequest{}, err
+	}
+	return request, nil
 }
 
+func (request ConditionalSnapshotReadRequest) Version() uint16   { return request.version }
 func (request ConditionalSnapshotReadRequest) Namespace() string { return request.namespace }
 func (request ConditionalSnapshotReadRequest) Keys() [][]byte {
 	keys := make([][]byte, len(request.keys))
@@ -123,30 +147,37 @@ type wireConditionalSnapshotReadResult struct {
 }
 
 func buildConditionalSnapshotReadRequest(request ConditionalSnapshotReadRequest) (wireConditionalSnapshotReadRequest, error) {
-	validated, err := NewConditionalSnapshotReadRequest(request.namespace, request.keys, request.requiredRevision)
+	validated, err := newConditionalSnapshotReadRequest(request.version, request.namespace, request.keys, request.requiredRevision)
 	if err != nil {
-		return wireConditionalSnapshotReadRequest{}, newError(CodeInvalidArgument, "conditional snapshot read", "request was not created by NewConditionalSnapshotReadRequest", err)
+		return wireConditionalSnapshotReadRequest{}, newError(CodeInvalidArgument, "conditional snapshot read", "request was not created by a conditional snapshot-read constructor", err)
 	}
-	keys := make([]wireBytes, len(validated.keys))
-	for index, key := range validated.keys {
+	return conditionalSnapshotReadWire(validated), nil
+}
+
+func conditionalSnapshotReadWire(request ConditionalSnapshotReadRequest) wireConditionalSnapshotReadRequest {
+	keys := make([]wireBytes, len(request.keys))
+	for index, key := range request.keys {
 		keys[index] = presentWireBytes(key)
 	}
-	revision := wireNullableCanonicalUint64{Present: true, Null: validated.requiredRevision == nil}
-	if validated.requiredRevision != nil {
-		revision.Value = *validated.requiredRevision
+	revision := wireNullableCanonicalUint64{Present: true, Null: request.requiredRevision == nil}
+	if request.requiredRevision != nil {
+		revision.Value = *request.requiredRevision
 	}
-	result := wireConditionalSnapshotReadRequest{
-		Version: conditionalSnapshotReadVersion, Namespace: validated.namespace,
+	return wireConditionalSnapshotReadRequest{
+		Version: request.version, Namespace: request.namespace,
 		Keys: keys, Revision: revision,
 	}
-	encoded, err := json.Marshal(result)
+}
+
+func validateConditionalSnapshotReadRequestSize(request ConditionalSnapshotReadRequest) error {
+	encoded, err := json.Marshal(conditionalSnapshotReadWire(request))
 	if err != nil {
-		return wireConditionalSnapshotReadRequest{}, newError(CodeInvalidArgument, "conditional snapshot read", "request could not be encoded", err)
+		return newError(CodeInvalidArgument, "conditional snapshot read", "request could not be encoded", err)
 	}
 	if len(encoded) > maxConditionalSnapshotRequestBytes {
-		return wireConditionalSnapshotReadRequest{}, newError(CodeInvalidArgument, "conditional snapshot read", "request exceeds the 512 KiB canonical JSON bound", nil)
+		return newError(CodeInvalidArgument, "conditional snapshot read", "request exceeds the 512 KiB canonical JSON bound", nil)
 	}
-	return result, nil
+	return nil
 }
 
 func decodeConditionalSnapshotReadResult(data []byte, request ConditionalSnapshotReadRequest) (ConditionalSnapshotReadResult, error) {
@@ -157,7 +188,7 @@ func decodeConditionalSnapshotReadResult(data []byte, request ConditionalSnapsho
 	if err := decodeStrictJSON(data, &wire); err != nil {
 		return ConditionalSnapshotReadResult{}, conditionalSnapshotReadProtocolError("decode conditional snapshot read", err)
 	}
-	if wire.Version != conditionalSnapshotReadVersion || wire.Namespace != request.namespace || !wire.Revision.Present || !sameNullableRevision(wire.Revision, request.requiredRevision) || len(wire.Observations) != len(request.keys) {
+	if wire.Version != request.version || wire.Namespace != request.namespace || !wire.Revision.Present || !sameNullableRevision(wire.Revision, request.requiredRevision) || len(wire.Observations) != len(request.keys) {
 		return ConditionalSnapshotReadResult{}, conditionalSnapshotReadProtocolError("decode conditional snapshot read", fmt.Errorf("response substituted request identity or observations"))
 	}
 	if !wire.ObservedRevision.Present || !wire.SnapshotRevision.Present || !shaPattern.MatchString(wire.ResponseSHA256) {
@@ -196,7 +227,7 @@ func decodeConditionalSnapshotReadResult(data []byte, request ConditionalSnapsho
 		return ConditionalSnapshotReadResult{}, conditionalSnapshotReadProtocolError("decode conditional snapshot read", fmt.Errorf("response SHA-256 mismatch"))
 	}
 	return ConditionalSnapshotReadResult{
-		Version: conditionalSnapshotReadVersion, Namespace: request.namespace,
+		Version: request.version, Namespace: request.namespace,
 		RequiredRevision: cloneUint64Pointer(request.requiredRevision), ObservedRevision: wire.ObservedRevision.Value,
 		SnapshotRevision: wire.SnapshotRevision.Value, Observations: observations,
 		ResponseSHA256: wire.ResponseSHA256,
@@ -205,7 +236,11 @@ func decodeConditionalSnapshotReadResult(data []byte, request ConditionalSnapsho
 
 func conditionalSnapshotReadResponseSHA(result wireConditionalSnapshotReadResult) string {
 	hash := sha256.New()
-	_, _ = hash.Write([]byte("TALON_CONDITIONAL_SNAPSHOT_READ_RESULT_V1"))
+	domain, ok := conditionalSnapshotReadDigestDomain(result.Version)
+	if !ok {
+		return ""
+	}
+	_, _ = hash.Write([]byte(domain))
 	var u16 [2]byte
 	binary.BigEndian.PutUint16(u16[:], result.Version)
 	_, _ = hash.Write(u16[:])
@@ -233,6 +268,28 @@ func conditionalSnapshotReadResponseSHA(result wireConditionalSnapshotReadResult
 		}
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func conditionalSnapshotReadMaxKeys(version uint16) (int, bool) {
+	switch version {
+	case conditionalSnapshotReadVersionV1:
+		return maxConditionalSnapshotReadKeysV1, true
+	case conditionalSnapshotReadVersionV2:
+		return maxConditionalSnapshotReadKeysV2, true
+	default:
+		return 0, false
+	}
+}
+
+func conditionalSnapshotReadDigestDomain(version uint16) (string, bool) {
+	switch version {
+	case conditionalSnapshotReadVersionV1:
+		return "TALON_CONDITIONAL_SNAPSHOT_READ_RESULT_V1", true
+	case conditionalSnapshotReadVersionV2:
+		return "TALON_CONDITIONAL_SNAPSHOT_READ_RESULT_V2", true
+	default:
+		return "", false
+	}
 }
 
 func conditionalSnapshotReadProtocolError(operation string, cause error) error {

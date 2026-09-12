@@ -201,10 +201,11 @@ TALON_NATIVE_EXPECTED_HEADER_SHA256
 `TALON_NATIVE_REQUIRED_CAPABILITIES` is an optional comma-separated list. A
 required signed feature that is gated, or not implemented by this SDK version,
 prevents startup. Recognized values are `storage_conditional_batch_v1`,
-`storage_conditional_point_read`, `storage_conditional_snapshot_read`, and
-`revision_stream`. The point-read requires Core's
-`storage_conditional_point_read_v1`; same-snapshot multi-key reads require
-`storage_conditional_snapshot_read_v1`; revision streams require both
+`storage_conditional_point_read`, `storage_conditional_snapshot_read`,
+`storage_conditional_snapshot_read_v2`, and `revision_stream`. The point-read
+requires Core's `storage_conditional_point_read_v1`; same-snapshot multi-key
+reads require the version-matched `storage_conditional_snapshot_read_v1` or
+`storage_conditional_snapshot_read_v2`; revision streams require both
 `revision_stream_v1` and `revision_stream_v2_mmr_proof` from the artifact-bound
 runtime self-manifest.
 
@@ -375,12 +376,12 @@ does not simulate them with read-before-write, process locks, or repeated
 
 ### Conditional same-snapshot multi-key reads
 
-`ConditionalSnapshotGet` reads 1–128 unique keys from one local MVCC snapshot.
-It preserves request order, distinguishes absent keys from existing empty
-values, verifies every echoed key and observation index, and authenticates the
-complete response with `response_sha256`. It is still a bounded snapshot
-observation: the revision is a lower bound and `SnapshotRevision` is local
-metadata, not a portable fence or historical-read selector.
+`ConditionalSnapshotGet` reads a sealed, versioned key set from one local MVCC
+snapshot. The immutable v1 constructor accepts 1–128 unique keys; the explicit
+v2 constructor accepts 1–256. Both preserve request order, distinguish absent
+keys from existing empty values, verify every echoed key and observation index,
+and authenticate the complete response with `response_sha256`. V2 is still one
+bounded call, not pagination or a historical snapshot handle.
 
 ```go
 snapshotRequest, err := talon.NewConditionalSnapshotReadRequest(
@@ -394,11 +395,27 @@ if err != nil {
 snapshot, err := db.ConditionalSnapshotGet(snapshotRequest)
 ```
 
-The capability is versioned as `storage_conditional_snapshot_read` v1 and the
-SDK fails closed while Core reports it as gated. The contract does not provide
-arbitrary historical reads, range absence, or a transactional dynamic read
-set; callers must derive any later key set and validate the returned receipt
-identity inside the verified snapshot.
+For 129–256 keys, select v2 explicitly:
+
+```go
+snapshotRequest, err := talon.NewConditionalSnapshotReadRequestV2(
+    "billing",
+    orderedKeys,
+    &requiredRevision,
+)
+```
+
+`request.Version()` reports the sealed wire version. V1 uses the digest domain
+`TALON_CONDITIONAL_SNAPSHOT_READ_RESULT_V1`; v2 uses
+`TALON_CONDITIONAL_SNAPSHOT_READ_RESULT_V2`. The embedded client requires the
+exact same-version `storage_conditional_snapshot_read` capability and feature,
+while the Server client verifies the echoed response version and complete
+digest. A v1 gate can therefore remain closed while v2 is available without
+either version being inferred from the other.
+
+The contract does not provide arbitrary historical reads, range absence, or a
+transactional dynamic read set; callers must derive any later key set and
+validate the returned receipt identity inside the verified snapshot.
 
 ### Authenticated immutable revision stream v2
 

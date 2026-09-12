@@ -89,10 +89,24 @@ type NativeInfo struct {
 
 // NativeCapability is reported by the loaded Core build manifest.
 type NativeCapability struct {
-	Name    string  `json:"name"`
-	Version int     `json:"version"`
-	Status  string  `json:"status"`
-	Reason  *string `json:"reason,omitempty"`
+	Name    string                  `json:"name"`
+	Version int                     `json:"version"`
+	Status  string                  `json:"status"`
+	Reason  *string                 `json:"reason,omitempty"`
+	Limits  *NativeCapabilityLimits `json:"limits,omitempty"`
+}
+
+// NativeCapabilityLimits is the artifact-bound limit record introduced by
+// the Core build manifest v2. It is retained even for capabilities the SDK
+// does not expose so the runtime build binding can be verified exactly.
+type NativeCapabilityLimits struct {
+	MaxConditions             uint64   `json:"max_conditions"`
+	MaxMutations              uint64   `json:"max_mutations"`
+	MaxKeyBytes               uint64   `json:"max_key_bytes"`
+	MaxReceiptBytes           uint64   `json:"max_receipt_bytes"`
+	ServerHTTPMaxRequestBytes uint64   `json:"server_http_max_request_bytes"`
+	AllowedConditionOperators []string `json:"allowed_condition_operators"`
+	ReceiptAuthentication     string   `json:"receipt_authentication"`
 }
 
 // CapabilityGate is copied from the signed feature set.
@@ -475,7 +489,7 @@ func validateNativePolicy(policy NativePolicy) error {
 	}
 	seen := map[string]struct{}{}
 	for _, capability := range policy.RequiredCapabilities {
-		if capability != "storage_conditional_batch_v1" && capability != "storage_conditional_point_read" && capability != "storage_conditional_snapshot_read" && capability != "revision_stream" {
+		if capability != "storage_conditional_batch_v1" && capability != "storage_conditional_point_read" && capability != "storage_conditional_snapshot_read" && capability != "storage_conditional_snapshot_read_v2" && capability != "revision_stream" {
 			return fmt.Errorf("unknown required native capability %q", capability)
 		}
 		if _, exists := seen[capability]; exists {
@@ -772,7 +786,7 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 		return build, fmt.Errorf("strict Core build manifest decode: %w", err)
 	}
 	external := verified.Manifest
-	if build.ManifestVersion != 1 || build.CoreSemver != external.Source.CargoVersion || build.GitCommit != external.Source.Commit || build.GitDirty == nil || *build.GitDirty || build.Target != external.Build.Target || build.CargoLockSHA256 != external.Source.CargoLockSHA256 || build.HeaderSHA256 != external.ABI.HeaderSHA256 {
+	if (build.ManifestVersion != 1 && build.ManifestVersion != 2) || build.CoreSemver != external.Source.CargoVersion || build.GitCommit != external.Source.Commit || build.GitDirty == nil || *build.GitDirty || build.Target != external.Build.Target || build.CargoLockSHA256 != external.Source.CargoLockSHA256 || build.HeaderSHA256 != external.ABI.HeaderSHA256 {
 		return build, fmt.Errorf("Core source/build identity differs from signed artifact metadata")
 	}
 	if build.ABI.Profile != external.ABI.Profile || build.ABI.Version != external.ABI.Version || !sameStringSet(build.ABI.RequiredSymbols, external.ABI.RequiredSymbols) || !sameStringSet(build.ABI.RequiredSymbols, sdkRequiredSymbols) {
@@ -788,12 +802,14 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 		}
 		seenFeatures[feature] = struct{}{}
 	}
-	for _, required := range []string{"native_build_manifest_v1", "native_error_codes_v1", "sql_tlv_v1", "native_conditional_transaction_v2", "conditional_transaction_command_digest_v1"} {
+	manifestFeature := fmt.Sprintf("native_build_manifest_v%d", build.ManifestVersion)
+	for _, required := range []string{manifestFeature, "native_error_codes_v1", "sql_tlv_v1", "native_conditional_transaction_v2", "conditional_transaction_command_digest_v1"} {
 		if _, ok := seenFeatures[required]; !ok {
 			return build, fmt.Errorf("Core build manifest omitted required feature %q", required)
 		}
 	}
 	capabilities := map[string]NativeCapability{}
+	capabilityNames := map[string]int{}
 	for _, capability := range build.Capabilities {
 		if capability.Name == "" || capability.Version <= 0 || (capability.Status != "available" && capability.Status != "gated") {
 			return build, fmt.Errorf("Core build manifest contains an invalid capability")
@@ -801,31 +817,43 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 		if capability.Status == "gated" && (capability.Reason == nil || strings.TrimSpace(*capability.Reason) == "") {
 			return build, fmt.Errorf("gated Core capability %q omitted its reason", capability.Name)
 		}
-		if _, duplicate := capabilities[capability.Name]; duplicate {
-			return build, fmt.Errorf("Core build manifest contains duplicate capability %q", capability.Name)
+		if capability.Limits != nil && build.ManifestVersion < 2 {
+			return build, fmt.Errorf("Core build manifest v1 capability %q unexpectedly contains limits", capability.Name)
 		}
-		capabilities[capability.Name] = capability
+		identity := fmt.Sprintf("%s@%d", capability.Name, capability.Version)
+		if _, duplicate := capabilities[identity]; duplicate {
+			return build, fmt.Errorf("Core build manifest contains duplicate capability %q version %d", capability.Name, capability.Version)
+		}
+		capabilities[identity] = capability
+		capabilityNames[capability.Name]++
 	}
-	conditionalV2, ok := capabilities["native_conditional_transaction_v2"]
+	for name, count := range capabilityNames {
+		if count > 1 && name != "storage_conditional_snapshot_read" {
+			return build, fmt.Errorf("Core build manifest contains ambiguous versions of capability %q", name)
+		}
+	}
+	conditionalV2, ok := capabilities["native_conditional_transaction_v2@2"]
 	if !ok || conditionalV2.Version != 2 || conditionalV2.Status != "available" {
 		return build, fmt.Errorf("native_conditional_transaction_v2 is not available to this SDK")
 	}
-	if revisionStream, ok := capabilities["revision_stream"]; ok {
+	if revisionStream, ok := singleNativeCapability(build.Capabilities, "revision_stream"); ok {
 		if revisionStream.Version != revisionStreamVersion || !containsString(build.Features, "revision_stream_v1") || !containsString(build.Features, "revision_stream_v2_mmr_proof") {
 			return build, fmt.Errorf("revision_stream capability does not match the SDK v2 authenticated-proof contract")
 		}
 	}
-	pointRead, hasPointRead := capabilities["storage_conditional_point_read"]
+	pointRead, hasPointRead := capabilities[fmt.Sprintf("storage_conditional_point_read@%d", conditionalPointReadVersion)]
 	pointReadFeature := containsString(build.Features, "storage_conditional_point_read_v1")
 	if hasPointRead != pointReadFeature || (hasPointRead && pointRead.Version != conditionalPointReadVersion) {
 		return build, fmt.Errorf("storage_conditional_point_read capability does not match the SDK v1 typed contract")
 	}
-	snapshotRead, hasSnapshotRead := capabilities["storage_conditional_snapshot_read"]
-	snapshotReadFeature := containsString(build.Features, "storage_conditional_snapshot_read_v1")
-	if hasSnapshotRead != snapshotReadFeature || (hasSnapshotRead && snapshotRead.Version != conditionalSnapshotReadVersion) {
-		return build, fmt.Errorf("storage_conditional_snapshot_read capability does not match the SDK v1 typed contract")
+	for _, version := range []int{conditionalSnapshotReadVersion, serverprotocol.ConditionalSnapshotReadVersionV2} {
+		_, hasSnapshotRead := capabilities[fmt.Sprintf("storage_conditional_snapshot_read@%d", version)]
+		snapshotReadFeature := containsString(build.Features, fmt.Sprintf("storage_conditional_snapshot_read_v%d", version))
+		if hasSnapshotRead != snapshotReadFeature {
+			return build, fmt.Errorf("storage_conditional_snapshot_read capability v%d does not match its typed feature", version)
+		}
 	}
-	storageV1, ok := capabilities["storage_conditional_batch"]
+	storageV1, ok := capabilities["storage_conditional_batch@1"]
 	if external.Gates.StorageConditionalBatchV1.Status == "available" && (!ok || storageV1.Version != 1 || storageV1.Status != "available") {
 		return build, fmt.Errorf("signed storage_conditional_batch_v1 gate is not supported by loaded Core")
 	}
@@ -837,23 +865,27 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 
 func verifyRequiredRuntimeCapabilities(build coreBuildManifest, required []string) error {
 	for _, name := range required {
-		if name != "revision_stream" && name != "storage_conditional_point_read" && name != "storage_conditional_snapshot_read" {
+		if name != "revision_stream" && name != "storage_conditional_point_read" && name != "storage_conditional_snapshot_read" && name != "storage_conditional_snapshot_read_v2" {
 			continue
 		}
-		var found *NativeCapability
-		for index := range build.Capabilities {
-			if build.Capabilities[index].Name == name {
-				found = &build.Capabilities[index]
-				break
-			}
+		capabilityName, version := name, 0
+		if name == "storage_conditional_snapshot_read" {
+			version = conditionalSnapshotReadVersion
+		} else if name == "storage_conditional_snapshot_read_v2" {
+			capabilityName, version = "storage_conditional_snapshot_read", serverprotocol.ConditionalSnapshotReadVersionV2
+		} else if name == "storage_conditional_point_read" {
+			version = conditionalPointReadVersion
+		} else if name == "revision_stream" {
+			version = revisionStreamVersion
 		}
+		found := findNativeCapability(build.Capabilities, capabilityName, version)
 		available := false
 		if name == "revision_stream" {
 			available = found != nil && found.Version == revisionStreamVersion && found.Status == "available" && containsString(build.Features, "revision_stream_v1") && containsString(build.Features, "revision_stream_v2_mmr_proof")
 		} else if name == "storage_conditional_point_read" {
 			available = found != nil && found.Version == conditionalPointReadVersion && found.Status == "available" && containsString(build.Features, "storage_conditional_point_read_v1")
 		} else {
-			available = found != nil && found.Version == conditionalSnapshotReadVersion && found.Status == "available" && containsString(build.Features, "storage_conditional_snapshot_read_v1")
+			available = found != nil && found.Status == "available" && containsString(build.Features, fmt.Sprintf("storage_conditional_snapshot_read_v%d", version))
 		}
 		if !available {
 			reason := ""
@@ -891,8 +923,47 @@ func computeBuildBinding(build coreBuildManifest) string {
 			reason = *capability.Reason
 		}
 		bindBuildField(hash, reason)
+		if build.ManifestVersion >= 2 {
+			if capability.Limits == nil {
+				bindBuildField(hash, "absent")
+			} else {
+				bindBuildField(hash, "present")
+				limits := capability.Limits
+				for _, value := range []string{
+					strconv.FormatUint(limits.MaxConditions, 10),
+					strconv.FormatUint(limits.MaxMutations, 10),
+					strconv.FormatUint(limits.MaxKeyBytes, 10),
+					strconv.FormatUint(limits.MaxReceiptBytes, 10),
+					strconv.FormatUint(limits.ServerHTTPMaxRequestBytes, 10),
+					limits.ReceiptAuthentication,
+				} {
+					bindBuildField(hash, value)
+				}
+				for _, operator := range limits.AllowedConditionOperators {
+					bindBuildField(hash, operator)
+				}
+			}
+		}
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func findNativeCapability(capabilities []NativeCapability, name string, version int) *NativeCapability {
+	for index := range capabilities {
+		if capabilities[index].Name == name && capabilities[index].Version == version {
+			return &capabilities[index]
+		}
+	}
+	return nil
+}
+
+func singleNativeCapability(capabilities []NativeCapability, name string) (NativeCapability, bool) {
+	for _, capability := range capabilities {
+		if capability.Name == name {
+			return capability, true
+		}
+	}
+	return NativeCapability{}, false
 }
 
 func bindBuildField(hash io.Writer, value string) {

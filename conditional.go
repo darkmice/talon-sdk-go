@@ -155,13 +155,14 @@ type wireConditionalLookup = serverprotocol.WireConditionalLookup
 type conditionalMutationKind = serverprotocol.ConditionalMutationKind
 
 const (
-	conditionalTransactionVersion  = serverprotocol.ConditionalTransactionVersion
-	conditionalPointReadVersion    = serverprotocol.ConditionalPointReadVersion
-	conditionalSnapshotReadVersion = serverprotocol.ConditionalSnapshotReadVersion
-	maxConditionalKeyBytes         = serverprotocol.MaxConditionalKeyBytes
-	conditionalPut                 = serverprotocol.ConditionalMutationPut
-	conditionalDelete              = serverprotocol.ConditionalMutationDelete
-	conditionalIncrement           = serverprotocol.ConditionalMutationIncrement
+	conditionalTransactionVersion    = serverprotocol.ConditionalTransactionVersion
+	conditionalPointReadVersion      = serverprotocol.ConditionalPointReadVersion
+	conditionalSnapshotReadVersion   = serverprotocol.ConditionalSnapshotReadVersion
+	conditionalSnapshotReadVersionV2 = serverprotocol.ConditionalSnapshotReadVersionV2
+	maxConditionalKeyBytes           = serverprotocol.MaxConditionalKeyBytes
+	conditionalPut                   = serverprotocol.ConditionalMutationPut
+	conditionalDelete                = serverprotocol.ConditionalMutationDelete
+	conditionalIncrement             = serverprotocol.ConditionalMutationIncrement
 )
 
 type conditionalPattern func(string) bool

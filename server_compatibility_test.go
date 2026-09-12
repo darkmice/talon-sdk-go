@@ -118,6 +118,48 @@ func TestEmbeddedDBConditionalCompatibilityUsesSharedProtocol(t *testing.T) {
 	}
 }
 
+func TestConditionalSnapshotReadV2UsesExactCapabilityVersion(t *testing.T) {
+	db := &DB{nativeInfo: NativeInfo{
+		Features: []string{"storage_conditional_snapshot_read_v1", "storage_conditional_snapshot_read_v2"},
+		Capabilities: []NativeCapability{
+			{Name: "storage_conditional_snapshot_read", Version: 1, Status: "gated", Reason: stringPointer("v1 remains gated")},
+			{Name: "storage_conditional_snapshot_read", Version: 2, Status: "available"},
+		},
+	}}
+	v1, err := NewConditionalSnapshotReadRequest("tenant", [][]byte{[]byte("key")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ConditionalSnapshotGet(v1); ErrorCodeOf(err) != CodeCapabilityUnavailable {
+		t.Fatalf("v1 did not honor its gated capability: %v", err)
+	}
+	v2, err := NewConditionalSnapshotReadRequestV2("tenant", [][]byte{[]byte("key")}, nil)
+	if err != nil || v2.Version() != ConditionalSnapshotReadVersionV2 {
+		t.Fatalf("v2 request = %#v, %v", v2, err)
+	}
+	if _, err := db.ConditionalSnapshotGet(v2); ErrorCodeOf(err) != CodeDatabaseClosed {
+		t.Fatalf("v2 did not select the available v2 capability: %v", err)
+	}
+
+	db.nativeInfo.Features = []string{"storage_conditional_snapshot_read_v1"}
+	if _, err := db.ConditionalSnapshotGet(v2); ErrorCodeOf(err) != CodeCapabilityUnavailable {
+		t.Fatalf("v2 missing feature did not fail closed: %v", err)
+	}
+
+	// Capability order is artifact-bound but must not change exact version
+	// selection in the SDK.
+	db.nativeInfo.Features = []string{"storage_conditional_snapshot_read_v1", "storage_conditional_snapshot_read_v2"}
+	db.nativeInfo.Capabilities = []NativeCapability{
+		{Name: "storage_conditional_snapshot_read", Version: 2, Status: "available"},
+		{Name: "storage_conditional_snapshot_read", Version: 1, Status: "available"},
+	}
+	if _, err := db.ConditionalSnapshotGet(v1); ErrorCodeOf(err) != CodeDatabaseClosed {
+		t.Fatalf("v1 selection depended on capability order: %v", err)
+	}
+}
+
+func stringPointer(value string) *string { return &value }
+
 // TestEmbeddedAndServerDecimalSemanticsAgree pins the cgo-free Server SQL
 // surface to the embedded path's DECIMAL semantics without requiring a live
 // native bundle: same bound, same exactness, same rejection, same canonical

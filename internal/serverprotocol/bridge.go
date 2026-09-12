@@ -15,13 +15,16 @@ type WireConditionalLookup = wireConditionalLookup
 type ConditionalMutationKind = conditionalMutationKind
 
 const (
-	ConditionalTransactionVersion  = conditionalTransactionVersion
-	ConditionalPointReadVersion    = conditionalPointReadVersion
-	ConditionalSnapshotReadVersion = conditionalSnapshotReadVersion
-	MaxConditionalKeyBytes         = maxConditionalKeyBytes
-	ConditionalMutationPut         = conditionalPut
-	ConditionalMutationDelete      = conditionalDelete
-	ConditionalMutationIncrement   = conditionalIncrement
+	ConditionalTransactionVersion    = conditionalTransactionVersion
+	ConditionalPointReadVersion      = conditionalPointReadVersion
+	ConditionalSnapshotReadVersion   = conditionalSnapshotReadVersionV1
+	ConditionalSnapshotReadVersionV2 = conditionalSnapshotReadVersionV2
+	ConditionalSnapshotReadMaxKeys   = maxConditionalSnapshotReadKeysV1
+	ConditionalSnapshotReadMaxKeysV2 = maxConditionalSnapshotReadKeysV2
+	MaxConditionalKeyBytes           = maxConditionalKeyBytes
+	ConditionalMutationPut           = conditionalPut
+	ConditionalMutationDelete        = conditionalDelete
+	ConditionalMutationIncrement     = conditionalIncrement
 )
 
 func (mutation ConditionalTransactionMutation) MutationKind() ConditionalMutationKind {

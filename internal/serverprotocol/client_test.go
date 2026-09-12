@@ -83,7 +83,7 @@ func TestServerClientTypedCoreOperations(t *testing.T) {
 		t.Fatal(err)
 	}
 	pointResult := makeConditionalPointReadWire(t, pointRequest, 9, 10, []byte("value"))
-	snapshotRequest, err := NewConditionalSnapshotReadRequest("tenant", [][]byte{[]byte("a"), []byte("b")}, &required)
+	snapshotRequest, err := NewConditionalSnapshotReadRequestV2("tenant", [][]byte{[]byte("a"), []byte("b")}, &required)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +148,13 @@ func TestServerClientTypedCoreOperations(t *testing.T) {
 			case "conditional_get":
 				writeServerTestData(w, pointResult)
 			case "conditional_snapshot_get":
+				var params wireConditionalSnapshotReadRequest
+				if err := decodeStrictJSON(command.Params, &params); err != nil {
+					t.Fatal(err)
+				}
+				if params.Version != conditionalSnapshotReadVersionV2 {
+					t.Fatalf("snapshot request version = %d", params.Version)
+				}
 				writeServerTestData(w, snapshotResult)
 			default:
 				t.Fatalf("unexpected storage action %q", command.Action)
@@ -189,7 +196,7 @@ func TestServerClientTypedCoreOperations(t *testing.T) {
 		t.Fatalf("point read = %#v, %v", point, err)
 	}
 	snapshot, err := client.ConditionalSnapshotGet(ctx, snapshotRequest)
-	if err != nil || len(snapshot.Observations) != 2 || string(snapshot.Observations[0].Value) != "one" || snapshot.Observations[1].Found {
+	if err != nil || snapshot.Version != conditionalSnapshotReadVersionV2 || len(snapshot.Observations) != 2 || string(snapshot.Observations[0].Value) != "one" || snapshot.Observations[1].Found {
 		t.Fatalf("snapshot read = %#v, %v", snapshot, err)
 	}
 }
@@ -254,6 +261,38 @@ func TestServerClientConditionalResponseLossIsIndeterminate(t *testing.T) {
 	case <-received:
 	case <-time.After(time.Second):
 		t.Fatal("server did not receive conditional transaction")
+	}
+}
+
+func TestServerClientSnapshotV2ResponseLossAllowsFreshWholeRead(t *testing.T) {
+	request, err := NewConditionalSnapshotReadRequestV2("snapshot-retry", [][]byte{[]byte("a"), []byte("b")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := makeConditionalSnapshotReadWire(t, request, 7, 8, []byte("new"), []byte("generation"))
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, httpRequest *http.Request) {
+		if httpRequest.URL.Path != "/api/storage" {
+			t.Fatalf("path = %q", httpRequest.URL.Path)
+		}
+		if calls.Add(1) == 1 {
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = connection.Close()
+			return
+		}
+		writeServerTestData(w, result)
+	}))
+	defer server.Close()
+	client := newTestServerClient(t, server.URL)
+	if _, err := client.ConditionalSnapshotGet(context.Background(), request); ErrorCodeOf(err) != CodeNativeUnavailable {
+		t.Fatalf("lost read response error = %v", err)
+	}
+	fresh, err := client.ConditionalSnapshotGet(context.Background(), request)
+	if err != nil || len(fresh.Observations) != 2 || string(fresh.Observations[0].Value) != "new" || string(fresh.Observations[1].Value) != "generation" {
+		t.Fatalf("fresh whole-read retry = %#v, %v", fresh, err)
 	}
 }
 

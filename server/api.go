@@ -129,6 +129,11 @@ type ConditionalPrefixScanEntry = protocol.ConditionalPrefixScanEntry
 type ConditionalPrefixScanResult = protocol.ConditionalPrefixScanResult
 
 const (
+	ConditionalSnapshotReadVersion   = protocol.ConditionalSnapshotReadVersion
+	ConditionalSnapshotReadVersionV2 = protocol.ConditionalSnapshotReadVersionV2
+	ConditionalSnapshotReadMaxKeys   = protocol.ConditionalSnapshotReadMaxKeys
+	ConditionalSnapshotReadMaxKeysV2 = protocol.ConditionalSnapshotReadMaxKeysV2
+
 	ConditionalPrefixScanVersion           = 1
 	ConditionalPrefixScanMaxEntries        = 256
 	ConditionalPrefixScanMaxPrefixBytes    = 8 << 10
@@ -161,6 +166,9 @@ func NewConditionalPointReadRequest(namespace string, key []byte, requiredRevisi
 }
 func NewConditionalSnapshotReadRequest(namespace string, keys [][]byte, requiredRevision *uint64) (ConditionalSnapshotReadRequest, error) {
 	return protocol.NewConditionalSnapshotReadRequest(namespace, keys, requiredRevision)
+}
+func NewConditionalSnapshotReadRequestV2(namespace string, keys [][]byte, requiredRevision *uint64) (ConditionalSnapshotReadRequest, error) {
+	return protocol.NewConditionalSnapshotReadRequestV2(namespace, keys, requiredRevision)
 }
 func ParseConditionalPrefixScanCursor(value string) (ConditionalPrefixScanCursor, error) {
 	return protocol.ParseConditionalPrefixScanCursor(value)

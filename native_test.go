@@ -211,7 +211,7 @@ func TestOpenFailsClosedWithoutNativePolicy(t *testing.T) {
 
 func TestRuntimeCapabilitiesMayBeRequiredButAreDeferredToRuntimeAttestation(t *testing.T) {
 	policy := testNativePolicy(t)
-	policy.RequiredCapabilities = []string{"storage_conditional_point_read", "revision_stream"}
+	policy.RequiredCapabilities = []string{"storage_conditional_point_read", "storage_conditional_snapshot_read_v2", "revision_stream"}
 	if err := validateNativePolicy(policy); err != nil {
 		t.Fatalf("runtime capability policy was not recognized: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestRuntimeCapabilitiesMayBeRequiredButAreDeferredToRuntimeAttestation(t *t
 		t.Fatalf("external bundle verification rejected deferred runtime gate: %v", err)
 	}
 	t.Cleanup(func() { _ = removeVerifiedNative(verified) })
-	if len(verified.requiredCapabilities) != 2 || verified.requiredCapabilities[0] != "storage_conditional_point_read" || verified.requiredCapabilities[1] != "revision_stream" {
+	if len(verified.requiredCapabilities) != 3 || verified.requiredCapabilities[0] != "storage_conditional_point_read" || verified.requiredCapabilities[1] != "storage_conditional_snapshot_read_v2" || verified.requiredCapabilities[2] != "revision_stream" {
 		t.Fatalf("required runtime capabilities were not retained: %#v", verified.requiredCapabilities)
 	}
 }
@@ -421,6 +421,78 @@ func TestCoreBuildIdentityCrossChecksSignedManifest(t *testing.T) {
 	data, _ = json.Marshal(build)
 	if _, err := verifyCoreBuildIdentity(data, verified); err == nil {
 		t.Fatal("Core identity differing from the signed manifest was accepted")
+	}
+}
+
+func TestCoreBuildManifestV2AcceptsVersionedSnapshotCapabilities(t *testing.T) {
+	verified, err := verifyNativeBundle(testNativePolicy(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = removeVerifiedNative(verified) })
+	dirty := false
+	gatedReason := "legacy v1 remains gated"
+	build := coreBuildManifest{
+		ManifestVersion: 2,
+		CoreSemver:      verified.Manifest.Source.CargoVersion,
+		GitCommit:       verified.Manifest.Source.Commit,
+		GitDirty:        &dirty,
+		Target:          verified.Manifest.Build.Target,
+		CargoLockSHA256: verified.Manifest.Source.CargoLockSHA256,
+		HeaderSHA256:    verified.Manifest.ABI.HeaderSHA256,
+		ABI: coreBuildABI{
+			Profile:         verified.Manifest.ABI.Profile,
+			Version:         verified.Manifest.ABI.Version,
+			RequiredSymbols: append([]string(nil), sdkRequiredSymbols...),
+		},
+		Features: []string{
+			"native_build_manifest_v2", "native_error_codes_v1", "sql_tlv_v1",
+			"native_conditional_transaction_v2", "conditional_transaction_command_digest_v1",
+			"storage_conditional_snapshot_read_v1", "storage_conditional_snapshot_read_v2",
+		},
+		Capabilities: []NativeCapability{
+			{Name: "native_conditional_transaction_v2", Version: 2, Status: "available"},
+			{Name: "storage_conditional_snapshot_read", Version: 1, Status: "gated", Reason: &gatedReason},
+			{Name: "storage_conditional_snapshot_read", Version: 2, Status: "available"},
+			{
+				Name: "storage_conditional_compact_receipt", Version: 3, Status: "available",
+				Limits: &NativeCapabilityLimits{
+					MaxConditions: 256, MaxMutations: 256, MaxKeyBytes: 65_536,
+					MaxReceiptBytes: 16 << 20, ServerHTTPMaxRequestBytes: 64 << 20,
+					AllowedConditionOperators: []string{"eq", "ne"},
+					ReceiptAuthentication:     "integrity_only_unkeyed_sha256",
+				},
+			},
+		},
+	}
+	build.BuildBindingSHA256 = computeBuildBinding(build)
+	data, err := json.Marshal(build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := verifyCoreBuildIdentity(data, verified)
+	if err != nil {
+		t.Fatalf("matching manifest v2 was rejected: %v", err)
+	}
+	if err := verifyRequiredRuntimeCapabilities(decoded, []string{"storage_conditional_snapshot_read_v2"}); err != nil {
+		t.Fatalf("available snapshot v2 was rejected: %v", err)
+	}
+	if err := verifyRequiredRuntimeCapabilities(decoded, []string{"storage_conditional_snapshot_read"}); err == nil {
+		t.Fatal("gated snapshot v1 was accepted through the compatibility capability name")
+	}
+
+	build.Capabilities[3].Limits.MaxConditions++
+	data, _ = json.Marshal(build)
+	if _, err := verifyCoreBuildIdentity(data, verified); err == nil {
+		t.Fatal("tampered manifest v2 limits were accepted without a binding update")
+	}
+	build.Capabilities[3].Limits.MaxConditions--
+	build.BuildBindingSHA256 = computeBuildBinding(build)
+	build.Capabilities = append(build.Capabilities, build.Capabilities[2])
+	build.BuildBindingSHA256 = computeBuildBinding(build)
+	data, _ = json.Marshal(build)
+	if _, err := verifyCoreBuildIdentity(data, verified); err == nil {
+		t.Fatal("duplicate snapshot capability version was accepted")
 	}
 }
 
