@@ -42,6 +42,7 @@ const (
 	CodeNativeStorage            = protocol.CodeNativeStorage
 	CodeNativeUnsupportedAction  = protocol.CodeNativeUnsupportedAction
 	CodeNativeNotConfigured      = protocol.CodeNativeNotConfigured
+	CodeNativeDecimalOutOfRange  = protocol.CodeNativeDecimalOutOfRange
 )
 
 type TalonError = protocol.TalonError

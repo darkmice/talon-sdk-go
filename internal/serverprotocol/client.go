@@ -49,11 +49,20 @@ type ServerTLSConfig struct {
 // ServerClientConfig defines one remote Talon Server authority. Timeout is
 // required and applies to the complete HTTP exchange. Empty Token is allowed
 // only for a Server endpoint that is intentionally configured without auth.
+//
+// ServerSQLAttestation is the explicit, out-of-band acknowledgement that the
+// caller verified one exact released talon-bin artifact for this endpoint. It
+// binds the release tag, talon-bin/Core commits, and artifact SHA-256 instead
+// of accepting a capability name alone. The cgo-free client has no
+// authenticated remote build-manifest endpoint to read, so it never infers
+// availability from an endpoint, tag, or symbol; without an attestation SQL
+// fails closed with CodeCapabilityUnavailable.
 type ServerClientConfig struct {
-	BaseURL string
-	Token   string
-	Timeout time.Duration
-	TLS     *ServerTLSConfig
+	BaseURL              string
+	Token                string
+	Timeout              time.Duration
+	TLS                  *ServerTLSConfig
+	ServerSQLAttestation *ServerSQLAttestation
 }
 
 // ServerClient is the typed client for a Talon Server process. It never reads
@@ -67,7 +76,9 @@ type ServerClient struct {
 	healthURL  string
 	kvURL      string
 	storageURL string
+	sqlURL     string
 	token      string
+	sqlGate    ServerSQLGate
 	httpClient *http.Client
 }
 
@@ -84,6 +95,10 @@ func NewServerClient(config ServerClientConfig) (*ServerClient, error) {
 	if err := validateServerToken(config.Token); err != nil {
 		return nil, err
 	}
+	sqlGate, err := openServerSQLGate(config.ServerSQLAttestation)
+	if err != nil {
+		return nil, err
+	}
 	tlsConfig, err := buildServerTLSConfig(base, config.TLS)
 	if err != nil {
 		return nil, err
@@ -98,7 +113,9 @@ func NewServerClient(config ServerClientConfig) (*ServerClient, error) {
 		healthURL:  serverEndpoint(base, "/health"),
 		kvURL:      serverEndpoint(base, "/api/kv"),
 		storageURL: serverEndpoint(base, "/api/storage"),
+		sqlURL:     serverEndpoint(base, "/api/sql"),
 		token:      config.Token,
+		sqlGate:    sqlGate,
 		httpClient: &http.Client{
 			Timeout:   config.Timeout,
 			Transport: transport,
@@ -187,7 +204,7 @@ func (client *ServerClient) Close() {
 }
 
 func (client *ServerClient) configured() bool {
-	return client != nil && client.httpClient != nil && client.healthURL != "" && client.kvURL != "" && client.storageURL != ""
+	return client != nil && client.httpClient != nil && client.healthURL != "" && client.kvURL != "" && client.storageURL != "" && client.sqlURL != ""
 }
 
 // ServerHealth is the typed projection of GET /health.

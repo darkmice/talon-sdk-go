@@ -50,6 +50,7 @@ const (
 	CodeNativeStorage            = serverapi.CodeNativeStorage
 	CodeNativeUnsupportedAction  = serverapi.CodeNativeUnsupportedAction
 	CodeNativeNotConfigured      = serverapi.CodeNativeNotConfigured
+	CodeNativeDecimalOutOfRange  = serverapi.CodeNativeDecimalOutOfRange
 )
 
 // TalonError is the public machine-readable error envelope.
@@ -124,6 +125,8 @@ func newNativeError(operation, message, nativeCode string) error {
 		code = CodeNativeUnsupportedAction
 	case "not_configured":
 		code = CodeNativeNotConfigured
+	case "decimal_out_of_range":
+		code = CodeNativeDecimalOutOfRange
 	}
 	return &TalonError{Code: code, NativeCode: nativeCode, Operation: operation, Message: message}
 }
