@@ -299,6 +299,11 @@ func cloneNativeCapabilities(capabilities []NativeCapability) []NativeCapability
 			reason := *capability.Reason
 			result[index].Reason = &reason
 		}
+		if capability.Limits != nil {
+			limits := *capability.Limits
+			limits.AllowedConditionOperators = append([]string(nil), capability.Limits.AllowedConditionOperators...)
+			result[index].Limits = &limits
+		}
 	}
 	return result
 }
@@ -328,6 +333,12 @@ func (db *DB) RequireCapability(name string) error {
 	if name == "storage_conditional_batch_v1" {
 		return ErrStorageConditionalBatchUnavailable
 	}
+	if name == "storage_conditional_snapshot_read_v2" {
+		return db.requireConditionalSnapshotReadVersion(conditionalSnapshotReadVersionV2)
+	}
+	if name == "storage_conditional_snapshot_read" {
+		return db.requireConditionalSnapshotReadVersion(conditionalSnapshotReadVersion)
+	}
 	var coreCapability *NativeCapability
 	for index := range db.nativeInfo.Capabilities {
 		if db.nativeInfo.Capabilities[index].Name == name {
@@ -351,13 +362,32 @@ func (db *DB) RequireCapability(name string) error {
 	if name == "storage_conditional_point_read" && coreCapability.Version == conditionalPointReadVersion && containsString(db.nativeInfo.Features, "storage_conditional_point_read_v1") {
 		return nil
 	}
-	if name == "storage_conditional_snapshot_read" && coreCapability.Version == conditionalSnapshotReadVersion && containsString(db.nativeInfo.Features, "storage_conditional_snapshot_read_v1") {
-		return nil
-	}
 	if name == "revision_stream" && coreCapability.Version == revisionStreamVersion && containsString(db.nativeInfo.Features, "revision_stream_v1") && containsString(db.nativeInfo.Features, "revision_stream_v2_mmr_proof") {
 		return nil
 	}
 	return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("capability %q is not implemented by this SDK", name), nil)
+}
+
+func (db *DB) requireConditionalSnapshotReadVersion(version uint16) error {
+	if version != conditionalSnapshotReadVersion && version != conditionalSnapshotReadVersionV2 {
+		return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("conditional snapshot-read version %d is not implemented by this SDK", version), nil)
+	}
+	capability := findNativeCapability(db.nativeInfo.Capabilities, "storage_conditional_snapshot_read", int(version))
+	if capability == nil {
+		return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("loaded Core did not attest capability %q version %d", "storage_conditional_snapshot_read", version), nil)
+	}
+	if capability.Status != "available" {
+		reason := ""
+		if capability.Reason != nil {
+			reason = ": " + *capability.Reason
+		}
+		return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("storage_conditional_snapshot_read v%d is %s%s", version, capability.Status, reason), nil)
+	}
+	feature := fmt.Sprintf("storage_conditional_snapshot_read_v%d", version)
+	if !containsString(db.nativeInfo.Features, feature) {
+		return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("loaded Core omitted feature %q", feature), nil)
+	}
+	return nil
 }
 
 func nativeFailure(operation, fallback, nativeCode string) error {

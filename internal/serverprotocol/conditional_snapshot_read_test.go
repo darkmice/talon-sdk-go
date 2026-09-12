@@ -10,6 +10,7 @@ package serverprotocol
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"testing"
 )
@@ -27,7 +28,7 @@ func makeConditionalSnapshotReadWire(t *testing.T, request ConditionalSnapshotRe
 		}
 	}
 	wire := wireConditionalSnapshotReadResult{
-		Version: conditionalSnapshotReadVersion, Namespace: request.namespace, Revision: revision,
+		Version: request.version, Namespace: request.namespace, Revision: revision,
 		ObservedRevision: canonicalUint64{Value: observedRevision, Present: true}, SnapshotRevision: canonicalUint64{Value: snapshotRevision, Present: true},
 		Observations: observations,
 	}
@@ -119,7 +120,7 @@ func TestConditionalSnapshotReadRejectsMalformedWireAndBounds(t *testing.T) {
 			t.Fatalf("malformed snapshot-read %d error = %v", index, err)
 		}
 	}
-	tooMany := make([][]byte, maxConditionalSnapshotReadKeys+1)
+	tooMany := make([][]byte, maxConditionalSnapshotReadKeysV1+1)
 	for index := range tooMany {
 		tooMany[index] = []byte{byte(index), byte(index >> 8), byte(index >> 16)}
 	}
@@ -134,16 +135,21 @@ func TestConditionalSnapshotReadRejectsMalformedWireAndBounds(t *testing.T) {
 	if _, err := decodeConditionalSnapshotReadResult(oversized, request); ErrorCodeOf(err) != CodeProtocolViolation {
 		t.Fatalf("oversized snapshot value error = %v", err)
 	}
-	largeKeys := make([][]byte, maxConditionalSnapshotReadKeys)
-	for index := range largeKeys {
-		largeKeys[index] = bytes.Repeat([]byte{byte(index)}, maxConditionalKeyBytes)
+	largeKeys := [][]byte{
+		bytes.Repeat([]byte{254}, maxConditionalKeyBytes),
+		bytes.Repeat([]byte{255}, maxConditionalKeyBytes),
 	}
-	largeRequest, err := NewConditionalSnapshotReadRequest("tenant", largeKeys, nil)
-	if err != nil {
-		t.Fatal(err)
+	constructors := []struct {
+		name string
+		new  func(string, [][]byte, *uint64) (ConditionalSnapshotReadRequest, error)
+	}{
+		{name: "v1", new: NewConditionalSnapshotReadRequest},
+		{name: "v2", new: NewConditionalSnapshotReadRequestV2},
 	}
-	if _, err := buildConditionalSnapshotReadRequest(largeRequest); ErrorCodeOf(err) != CodeInvalidArgument {
-		t.Fatalf("oversized snapshot request error = %v", err)
+	for _, constructor := range constructors {
+		if _, err := constructor.new("tenant", largeKeys, nil); ErrorCodeOf(err) != CodeInvalidArgument {
+			t.Fatalf("%s oversized snapshot request error = %v", constructor.name, err)
+		}
 	}
 }
 
@@ -174,5 +180,72 @@ func TestConditionalSnapshotReadCoreDigestEncodingUsesCanonicalFields(t *testing
 	}
 	if !decoded.Observations[0].Value.Present || decoded.Observations[0].Value.Null {
 		t.Fatal("empty existing value lost its presence bit")
+	}
+}
+
+func TestConditionalSnapshotReadVersionedBoundsAndDigest(t *testing.T) {
+	numberedKeys := func(count int) [][]byte {
+		keys := make([][]byte, count)
+		for index := range keys {
+			keys[index] = []byte(fmt.Sprintf("fact-%03d", index))
+		}
+		return keys
+	}
+	for _, count := range []int{128, 129, 139, 256} {
+		request, err := NewConditionalSnapshotReadRequestV2("v2-bounds", numberedKeys(count), nil)
+		if err != nil || request.Version() != conditionalSnapshotReadVersionV2 || len(request.Keys()) != count {
+			t.Fatalf("v2 count %d request = %#v, %v", count, request, err)
+		}
+	}
+	if _, err := NewConditionalSnapshotReadRequest("v1-bound", numberedKeys(129), nil); ErrorCodeOf(err) != CodeInvalidArgument {
+		t.Fatalf("v1 accepted 129 keys: %v", err)
+	}
+	if _, err := NewConditionalSnapshotReadRequestV2("v2-bound", numberedKeys(257), nil); ErrorCodeOf(err) != CodeInvalidArgument {
+		t.Fatalf("v2 accepted 257 keys: %v", err)
+	}
+	if _, err := NewConditionalSnapshotReadRequestV2("v2-bound", [][]byte{[]byte("same"), []byte("same")}, nil); ErrorCodeOf(err) != CodeInvalidArgument {
+		t.Fatalf("v2 accepted duplicate keys: %v", err)
+	}
+
+	required := uint64(42)
+	request, err := NewConditionalSnapshotReadRequestV2("fixture", [][]byte{[]byte("a"), []byte("b"), []byte("c")}, &required)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := makeConditionalSnapshotReadWire(t, request, 42, 99, nil, []byte{}, []byte{0, 255})
+	result, err := decodeConditionalSnapshotReadResult(data, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Version != conditionalSnapshotReadVersionV2 || result.ResponseSHA256 != "258887b8157621dce4590f90efb499e276bdf1016bd97fa2dec8c8d3e22d8a72" {
+		t.Fatalf("v2 Core vector drifted: %#v", result)
+	}
+
+	var reordered wireConditionalSnapshotReadResult
+	if err := decodeStrictJSON(data, &reordered); err != nil {
+		t.Fatal(err)
+	}
+	reordered.Observations[0], reordered.Observations[1] = reordered.Observations[1], reordered.Observations[0]
+	reordered.ResponseSHA256 = conditionalSnapshotReadResponseSHA(reordered)
+	encoded, err := marshalWithoutHTMLEscape(reordered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeConditionalSnapshotReadResult(encoded, request); ErrorCodeOf(err) != CodeProtocolViolation {
+		t.Fatalf("v2 reordered observations error = %v", err)
+	}
+
+	var substituted wireConditionalSnapshotReadResult
+	if err := decodeStrictJSON(data, &substituted); err != nil {
+		t.Fatal(err)
+	}
+	substituted.Version = conditionalSnapshotReadVersionV1
+	substituted.ResponseSHA256 = conditionalSnapshotReadResponseSHA(substituted)
+	encoded, err = marshalWithoutHTMLEscape(substituted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeConditionalSnapshotReadResult(encoded, request); ErrorCodeOf(err) != CodeProtocolViolation {
+		t.Fatalf("response version substitution error = %v", err)
 	}
 }

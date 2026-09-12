@@ -9,8 +9,19 @@ type ConditionalSnapshotReadRequest = serverapi.ConditionalSnapshotReadRequest
 type ConditionalSnapshotReadObservation = serverapi.ConditionalSnapshotReadObservation
 type ConditionalSnapshotReadResult = serverapi.ConditionalSnapshotReadResult
 
+const (
+	ConditionalSnapshotReadVersion   = serverapi.ConditionalSnapshotReadVersion
+	ConditionalSnapshotReadVersionV2 = serverapi.ConditionalSnapshotReadVersionV2
+	ConditionalSnapshotReadMaxKeys   = serverapi.ConditionalSnapshotReadMaxKeys
+	ConditionalSnapshotReadMaxKeysV2 = serverapi.ConditionalSnapshotReadMaxKeysV2
+)
+
 func NewConditionalSnapshotReadRequest(namespace string, keys [][]byte, requiredRevision *uint64) (ConditionalSnapshotReadRequest, error) {
 	return serverapi.NewConditionalSnapshotReadRequest(namespace, keys, requiredRevision)
+}
+
+func NewConditionalSnapshotReadRequestV2(namespace string, keys [][]byte, requiredRevision *uint64) (ConditionalSnapshotReadRequest, error) {
+	return serverapi.NewConditionalSnapshotReadRequestV2(namespace, keys, requiredRevision)
 }
 
 func (db *DB) ConditionalSnapshotGet(request ConditionalSnapshotReadRequest) (ConditionalSnapshotReadResult, error) {
@@ -18,7 +29,7 @@ func (db *DB) ConditionalSnapshotGet(request ConditionalSnapshotReadRequest) (Co
 	if err != nil {
 		return ConditionalSnapshotReadResult{}, err
 	}
-	if err := db.RequireCapability("storage_conditional_snapshot_read"); err != nil {
+	if err := db.requireConditionalSnapshotReadVersion(request.Version()); err != nil {
 		return ConditionalSnapshotReadResult{}, err
 	}
 	data, err := db.execute("storage", "conditional_snapshot_get", params)
