@@ -191,17 +191,24 @@ func TestConditionalSnapshotReadVersionedBoundsAndDigest(t *testing.T) {
 		}
 		return keys
 	}
-	for _, count := range []int{128, 129, 139, 256} {
+	for _, count := range []int{128, 129, 139, 256, 453, 1024} {
 		request, err := NewConditionalSnapshotReadRequestV2("v2-bounds", numberedKeys(count), nil)
 		if err != nil || request.Version() != conditionalSnapshotReadVersionV2 || len(request.Keys()) != count {
 			t.Fatalf("v2 count %d request = %#v, %v", count, request, err)
+		}
+		if count == maxConditionalSnapshotReadKeysV2 {
+			values := make([][]byte, count)
+			result, err := decodeConditionalSnapshotReadResult(makeConditionalSnapshotReadWire(t, request, 1, 2, values...), request)
+			if err != nil || len(result.Observations) != count {
+				t.Fatalf("v2 maximum response count = %d, %v", len(result.Observations), err)
+			}
 		}
 	}
 	if _, err := NewConditionalSnapshotReadRequest("v1-bound", numberedKeys(129), nil); ErrorCodeOf(err) != CodeInvalidArgument {
 		t.Fatalf("v1 accepted 129 keys: %v", err)
 	}
-	if _, err := NewConditionalSnapshotReadRequestV2("v2-bound", numberedKeys(257), nil); ErrorCodeOf(err) != CodeInvalidArgument {
-		t.Fatalf("v2 accepted 257 keys: %v", err)
+	if _, err := NewConditionalSnapshotReadRequestV2("v2-bound", numberedKeys(1025), nil); ErrorCodeOf(err) != CodeInvalidArgument {
+		t.Fatalf("v2 accepted 1025 keys: %v", err)
 	}
 	if _, err := NewConditionalSnapshotReadRequestV2("v2-bound", [][]byte{[]byte("same"), []byte("same")}, nil); ErrorCodeOf(err) != CodeInvalidArgument {
 		t.Fatalf("v2 accepted duplicate keys: %v", err)

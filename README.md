@@ -378,7 +378,9 @@ does not simulate them with read-before-write, process locks, or repeated
 
 `ConditionalSnapshotGet` reads a sealed, versioned key set from one local MVCC
 snapshot. The immutable v1 constructor accepts 1–128 unique keys; the explicit
-v2 constructor accepts 1–256. Both preserve request order, distinguish absent
+v2 constructor accepts 1–1024 on Core revisions that implement the expanded v2
+bound. Older Core revisions can reject requests above 256 keys. Both preserve
+request order, distinguish absent
 keys from existing empty values, verify every echoed key and observation index,
 and authenticate the complete response with `response_sha256`. V2 is still one
 bounded call, not pagination or a historical snapshot handle.
@@ -395,7 +397,7 @@ if err != nil {
 snapshot, err := db.ConditionalSnapshotGet(snapshotRequest)
 ```
 
-For 129–256 keys, select v2 explicitly:
+For 129–1024 keys, select v2 explicitly:
 
 ```go
 snapshotRequest, err := talon.NewConditionalSnapshotReadRequestV2(
