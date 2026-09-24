@@ -20,7 +20,7 @@ const (
 	conditionalSnapshotReadVersionV1      = 1
 	conditionalSnapshotReadVersionV2      = 2
 	maxConditionalSnapshotReadKeysV1      = 128
-	maxConditionalSnapshotReadKeysV2      = 256
+	maxConditionalSnapshotReadKeysV2      = 1024
 	maxConditionalSnapshotValueBytes      = 3 << 20
 	maxConditionalSnapshotTotalValueBytes = 8 << 20
 	maxConditionalSnapshotRequestBytes    = 512 << 10

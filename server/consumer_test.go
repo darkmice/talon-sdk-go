@@ -51,7 +51,7 @@ func TestExternalConsumerBuildsWithoutRootPackage(t *testing.T) {
 		t.Fatalf("sealed prefix scan request = %#v, %v", prefixScan, err)
 	}
 	v2Snapshot, err := server.NewConditionalSnapshotReadRequestV2("consumer", [][]byte{[]byte("key")}, nil)
-	if err != nil || v2Snapshot.Version() != server.ConditionalSnapshotReadVersionV2 || server.ConditionalSnapshotReadMaxKeysV2 != 256 || server.ConditionalSnapshotReadMaxKeys != 128 {
+	if err != nil || v2Snapshot.Version() != server.ConditionalSnapshotReadVersionV2 || server.ConditionalSnapshotReadMaxKeysV2 != 1024 || server.ConditionalSnapshotReadMaxKeys != 128 {
 		t.Fatalf("sealed v2 snapshot request = %#v, %v", v2Snapshot, err)
 	}
 	cursor, err := server.ParseConditionalPrefixScanCursor("0123456789abcdef0123456789abcdef")
