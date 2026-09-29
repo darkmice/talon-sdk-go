@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -194,4 +195,34 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 	if err != nil || !got.Present || !bytes.Equal(got.Value, []byte{0, 0xff, 0}) {
 		t.Fatalf("binary value after restart = %#v, %v", got, err)
 	}
+	// Exercise the actual GoFrame driver in a separate test process. The
+	// production-style Open policy is process global, so the child receives
+	// this ephemeral test identity through the normal environment contract.
+	publicKeyPath := filepath.Join(bundle.policy.BundleDir, "local-test-public.pem")
+	if err := os.WriteFile(publicKeyPath, bundle.policy.PublicKeyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "test", "./goframe", "-run", "^TestLocalSignedCoreGoFrameInterop$", "-count=1", "-v")
+	cmd.Env = append(os.Environ(),
+		"TALON_GOFRAME_LIVE_DB="+filepath.Join(t.TempDir(), "goframe"),
+		"TALON_NATIVE_BUNDLE_DIR="+policy.BundleDir,
+		"TALON_NATIVE_PUBLIC_KEY_FILE="+publicKeyPath,
+		"TALON_NATIVE_EXPECTED_KEY_ID="+policy.ExpectedKeyID,
+		"TALON_NATIVE_EXPECTED_KEY_SHA256="+policy.ExpectedKeySHA256,
+		"TALON_NATIVE_EXPECTED_RELEASE_TAG="+policy.ExpectedReleaseTag,
+		"TALON_NATIVE_EXPECTED_TALON_BIN_COMMIT="+policy.ExpectedTalonBinCommit,
+		"TALON_NATIVE_EXPECTED_CORE_REPOSITORY="+policy.ExpectedCoreRepository,
+		"TALON_NATIVE_EXPECTED_CORE_TAG="+policy.ExpectedCoreTag,
+		"TALON_NATIVE_EXPECTED_CORE_COMMIT="+policy.ExpectedCoreCommit,
+		"TALON_NATIVE_EXPECTED_CORE_VERSION="+policy.ExpectedCoreVersion,
+		"TALON_NATIVE_EXPECTED_ABI_PROFILE="+policy.ExpectedABIProfile,
+		fmt.Sprintf("TALON_NATIVE_EXPECTED_ABI_VERSION=%d", policy.ExpectedABIVersion),
+		"TALON_NATIVE_EXPECTED_HEADER_SHA256="+policy.ExpectedHeaderSHA256,
+		"TALON_NATIVE_REQUIRED_CAPABILITIES=native_kv_read",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("GoFrame native integration: %v\n%s", err, output)
+	}
+	t.Logf("GoFrame native integration:\n%s", output)
 }
