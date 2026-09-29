@@ -70,7 +70,10 @@ func (db *DB) AiCleanupExpiredSessions() (uint64, error) {
 	var out struct {
 		Cleaned uint64 `json:"cleaned"`
 	}
-	return out.Cleaned, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Cleaned, nil
 }
 
 // AiArchiveSession 归档会话。
@@ -125,7 +128,10 @@ func (db *DB) AiClearContext(sessionID string) (uint64, error) {
 	var out struct {
 		Purged uint64 `json:"purged"`
 	}
-	return out.Purged, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Purged, nil
 }
 
 // AiAppendMessage 追加消息到会话上下文。
@@ -228,7 +234,10 @@ func (db *DB) AiMemoryCount() (uint64, error) {
 	var out struct {
 		Count uint64 `json:"count"`
 	}
-	return out.Count, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Count, nil
 }
 
 // AiUpdateMemory 更新记忆。
@@ -266,7 +275,10 @@ func (db *DB) AiCleanupExpiredMemories() (uint64, error) {
 	var out struct {
 		Cleaned uint64 `json:"cleaned"`
 	}
-	return out.Cleaned, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Cleaned, nil
 }
 
 // AiMemoryStats 获取记忆统计。
@@ -403,7 +415,10 @@ func (db *DB) AiTokenUsage(sessionID string) (uint64, error) {
 	var out struct {
 		TotalTokens uint64 `json:"total_tokens"`
 	}
-	return out.TotalTokens, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.TotalTokens, nil
 }
 
 // AiTokenUsageByRun 按 run_id 查询 token 用量。
@@ -417,7 +432,10 @@ func (db *DB) AiTokenUsageByRun(runID string) (uint64, error) {
 	var out struct {
 		TotalTokens uint64 `json:"total_tokens"`
 	}
-	return out.TotalTokens, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.TotalTokens, nil
 }
 
 // AiTraceStats 获取 trace 统计。
@@ -485,7 +503,10 @@ func (db *DB) AiTokenCount(text, encoding string) (int, error) {
 	var out struct {
 		Count int `json:"count"`
 	}
-	return out.Count, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Count, nil
 }
 
 // ── AI: LLM Config ──
@@ -543,7 +564,10 @@ func (db *DB) AiAddMemory(content string, metadata map[string]string, ttlSecs *u
 	var out struct {
 		ID uint64 `json:"id"`
 	}
-	return out.ID, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.ID, nil
 }
 
 // AiRecall 智能召回（hybrid search + 时间感知 + LLM Rerank + Graph 扩展）。
@@ -611,7 +635,10 @@ func (db *DB) ExportDb(dir string, keyspaces []string) (uint64, error) {
 	var out struct {
 		Exported uint64 `json:"exported"`
 	}
-	return out.Exported, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Exported, nil
 }
 
 // ImportDb 导入数据库，返回导入数量。
@@ -623,5 +650,8 @@ func (db *DB) ImportDb(dir string) (uint64, error) {
 	var out struct {
 		Imported uint64 `json:"imported"`
 	}
-	return out.Imported, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Imported, nil
 }

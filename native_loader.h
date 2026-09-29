@@ -17,6 +17,11 @@ void talon_sdk_close(TalonSDKHandle *handle);
 int talon_sdk_persist(const TalonSDKHandle *handle,
                       char *error_code,
                       size_t error_code_len);
+int talon_sdk_kv_set(const TalonSDKHandle *handle,
+                     const uint8_t *key, size_t key_len,
+                     const uint8_t *value, size_t value_len,
+                     int64_t ttl_secs,
+                     char *error_code, size_t error_code_len);
 int talon_sdk_execute(const TalonSDKHandle *handle,
                       const char *cmd_json,
                       char **out_json,
@@ -30,6 +35,14 @@ int talon_sdk_run_sql_param_bin(const TalonSDKHandle *handle,
                                 size_t *out_len,
                                 char *error_code,
                                 size_t error_code_len);
+int talon_sdk_kv_read_v1(const TalonSDKHandle *handle,
+                         uint32_t operation,
+                         const uint8_t *request,
+                         size_t request_len,
+                         uint8_t **out_data,
+                         size_t *out_len,
+                         char *error_code,
+                         size_t error_code_len);
 int talon_sdk_build_manifest(char **out_json,
                              char *error_code,
                              size_t error_code_len);

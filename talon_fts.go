@@ -41,7 +41,10 @@ func (db *DB) FtsIndexBatch(name string, docs []map[string]interface{}) (int, er
 	var out struct {
 		Count int `json:"count"`
 	}
-	return out.Count, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Count, nil
 }
 
 // FtsDelete 删除文档，返回是否存在并被删除。
@@ -55,7 +58,10 @@ func (db *DB) FtsDelete(name, docID string) (bool, error) {
 	var out struct {
 		Deleted bool `json:"deleted"`
 	}
-	return out.Deleted, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return false, err
+	}
+	return out.Deleted, nil
 }
 
 // FtsGet 获取文档字段，返回原始 JSON。
@@ -143,7 +149,10 @@ func (db *DB) FtsReindex(name string) (uint64, error) {
 	var out struct {
 		Reindexed uint64 `json:"reindexed"`
 	}
-	return out.Reindexed, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Reindexed, nil
 }
 
 // FtsCloseIndex 关闭索引（释放内存）。

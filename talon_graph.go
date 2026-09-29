@@ -29,7 +29,10 @@ func (db *DB) GraphAddVertex(graph, label string, properties map[string]string) 
 	var out struct {
 		VertexID uint64 `json:"vertex_id"`
 	}
-	return out.VertexID, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.VertexID, nil
 }
 
 // GraphGetVertex 获取顶点信息，返回原始 JSON。nil 表示不存在。
@@ -72,7 +75,10 @@ func (db *DB) GraphAddEdge(graph string, from, to uint64, label string, properti
 	var out struct {
 		EdgeID uint64 `json:"edge_id"`
 	}
-	return out.EdgeID, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.EdgeID, nil
 }
 
 // GraphGetEdge 获取边信息，返回原始 JSON。nil 表示不存在。
@@ -103,7 +109,10 @@ func (db *DB) GraphNeighbors(graph string, id uint64, direction string) ([]uint6
 	var out struct {
 		Neighbors []uint64 `json:"neighbors"`
 	}
-	return out.Neighbors, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out.Neighbors, nil
 }
 
 // GraphOutEdges 获取顶点的出边，返回原始 JSON。
@@ -136,7 +145,10 @@ func (db *DB) GraphVertexCount(graph string) (uint64, error) {
 	var out struct {
 		Count uint64 `json:"count"`
 	}
-	return out.Count, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Count, nil
 }
 
 // GraphEdgeCount 获取边总数。
@@ -148,7 +160,10 @@ func (db *DB) GraphEdgeCount(graph string) (uint64, error) {
 	var out struct {
 		Count uint64 `json:"count"`
 	}
-	return out.Count, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Count, nil
 }
 
 // GraphBFS 广度优先遍历，返回原始 JSON。direction: "out"/"in"/"both"。

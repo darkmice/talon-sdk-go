@@ -12,7 +12,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
+	"strings"
 )
 
 // NativeSQLBindSupported reports whether this SDK exposes parameterized SQL
@@ -138,9 +140,153 @@ func decodeCell(raw json.RawMessage) (Value, error) {
 				return Value{}, fmt.Errorf("invalid boolean payload")
 			}
 			return BooleanValue(value), nil
+		case "Blob":
+			var octets []int
+			if err := decodeStrictJSON(payload, &octets); err != nil {
+				return Value{}, fmt.Errorf("invalid blob payload: %w", err)
+			}
+			data := make([]byte, len(octets))
+			for i, octet := range octets {
+				if octet < 0 || octet > 255 {
+					return Value{}, fmt.Errorf("invalid blob octet")
+				}
+				data[i] = byte(octet)
+			}
+			return BlobValue(data), nil
+		case "Jsonb":
+			return JSONValue(payload)
+		case "Vector":
+			var vector []float32
+			if err := decodeStrictJSON(payload, &vector); err != nil {
+				return Value{}, err
+			}
+			return VectorValue(vector)
+		case "Timestamp", "Time", "Date":
+			var number json.Number
+			if err := decodeStrictJSON(payload, &number); err != nil {
+				return Value{}, err
+			}
+			n, err := strconv.ParseInt(number.String(), 10, 64)
+			if err != nil {
+				return Value{}, err
+			}
+			switch tag {
+			case "Timestamp":
+				return TimestampValue(n), nil
+			case "Date":
+				if n < math.MinInt32 || n > math.MaxInt32 {
+					return Value{}, fmt.Errorf("date out of range")
+				}
+				return DateValue(int32(n)), nil
+			default:
+				return TimeValue(n)
+			}
+		case "GeoPoint":
+			var pair []float64
+			if err := decodeStrictJSON(payload, &pair); err != nil || len(pair) != 2 {
+				return Value{}, fmt.Errorf("invalid GeoPoint payload")
+			}
+			return GeoPointValue(pair[0], pair[1])
+		case "Decimal":
+			var literal string
+			if err := decodeStrictJSON(payload, &literal); err != nil {
+				return Value{}, fmt.Errorf("invalid decimal payload")
+			}
+			return decimalFromText(literal)
 		default:
 			return Value{}, fmt.Errorf("unknown tagged value")
 		}
 	}
 	return Value{}, fmt.Errorf("invalid tagged value")
+}
+
+func decimalFromText(literal string) (Value, error) {
+	if literal == "" {
+		return Value{}, fmt.Errorf("empty decimal")
+	}
+	digits := literal
+	if digits[0] == '-' {
+		digits = digits[1:]
+	}
+	parts := strings.Split(digits, ".")
+	if len(parts) > 2 || len(parts[0]) == 0 {
+		return Value{}, fmt.Errorf("invalid decimal")
+	}
+	scale := 0
+	if len(parts) == 2 {
+		scale = len(parts[1])
+		digits = parts[0] + parts[1]
+	}
+	if scale > maxDecimalPrecision {
+		return Value{}, fmt.Errorf("decimal scale out of range")
+	}
+	for _, digit := range digits {
+		if digit < '0' || digit > '9' {
+			return Value{}, fmt.Errorf("invalid decimal digit")
+		}
+	}
+	coefficient, ok := new(big.Int).SetString(digits, 10)
+	if !ok {
+		return Value{}, fmt.Errorf("invalid decimal coefficient")
+	}
+	if literal[0] == '-' {
+		coefficient.Neg(coefficient)
+	}
+	return DecimalValue(coefficient, uint8(scale))
+}
+
+// MarshalJSON emits Core's tagged Value wire format for native SQL v2 binds.
+func (value Value) MarshalJSON() ([]byte, error) {
+	switch value.kind {
+	case KindNull:
+		return []byte(`"Null"`), nil
+	case KindInteger:
+		return json.Marshal(map[string]int64{"Integer": value.integer})
+	case KindFloat:
+		return json.Marshal(map[string]float64{"Float": value.float})
+	case KindText:
+		return json.Marshal(map[string]string{"Text": value.text})
+	case KindBlob:
+		octets := make([]int, len(value.bytes))
+		for i, octet := range value.bytes {
+			octets[i] = int(octet)
+		}
+		return json.Marshal(map[string][]int{"Blob": octets})
+	case KindBoolean:
+		return json.Marshal(map[string]bool{"Boolean": value.integer == 1})
+	case KindJSON:
+		result := append([]byte(`{"Jsonb":`), value.bytes...)
+		return append(result, '}'), nil
+	case KindVector:
+		return json.Marshal(map[string][]float32{"Vector": value.vector})
+	case KindTimestamp:
+		return json.Marshal(map[string]int64{"Timestamp": value.integer})
+	case KindDate:
+		return json.Marshal(map[string]int64{"Date": int64(value.date)})
+	case KindTime:
+		return json.Marshal(map[string]int64{"Time": value.integer})
+	case KindGeoPoint:
+		return json.Marshal(map[string][]float64{"GeoPoint": {value.geo.Latitude, value.geo.Longitude}})
+	case KindDecimal:
+		coefficient, scale, _ := value.Decimal()
+		return json.Marshal(map[string]string{"Decimal": formatDecimal(coefficient, scale)})
+	default:
+		return nil, fmt.Errorf("unsupported Talon value kind %d", value.kind)
+	}
+}
+
+func formatDecimal(coefficient *big.Int, scale uint8) string {
+	negative := coefficient.Sign() < 0
+	digits := new(big.Int).Abs(coefficient).String()
+	if int(scale) >= len(digits) {
+		digits = strings.Repeat("0", int(scale)+1-len(digits)) + digits
+	}
+	if scale > 0 {
+		index := len(digits) - int(scale)
+		digits = digits[:index] + "." + digits[index:]
+	}
+	if negative {
+		return "-" + digits
+	}
+	return digits
 }

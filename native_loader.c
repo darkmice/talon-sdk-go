@@ -7,10 +7,15 @@
 typedef TalonSDKHandle *(*talon_open_fn)(const char *);
 typedef void (*talon_close_fn)(TalonSDKHandle *);
 typedef int (*talon_persist_fn)(const TalonSDKHandle *);
+typedef int (*talon_kv_set_fn)(const TalonSDKHandle *, const uint8_t *, size_t,
+                               const uint8_t *, size_t, int64_t);
 typedef int (*talon_execute_fn)(const TalonSDKHandle *, const char *, char **);
 typedef int (*talon_run_sql_param_bin_fn)(const TalonSDKHandle *, const char *,
                                           const uint8_t *, size_t, uint8_t **,
                                           size_t *);
+typedef int (*talon_kv_read_v1_fn)(const TalonSDKHandle *, uint32_t,
+                                   const uint8_t *, size_t, uint8_t **,
+                                   size_t *);
 typedef void (*talon_free_string_fn)(char *);
 typedef void (*talon_free_bytes_fn)(uint8_t *, size_t);
 typedef const char *(*talon_last_error_fn)(void);
@@ -21,8 +26,10 @@ static void *native_library;
 static talon_open_fn native_open;
 static talon_close_fn native_close;
 static talon_persist_fn native_persist;
+static talon_kv_set_fn native_kv_set;
 static talon_execute_fn native_execute;
 static talon_run_sql_param_bin_fn native_run_sql_param_bin;
+static talon_kv_read_v1_fn native_kv_read_v1;
 static talon_free_string_fn native_free_string;
 static talon_free_bytes_fn native_free_bytes;
 static talon_last_error_fn native_last_error;
@@ -42,8 +49,10 @@ static void clear_symbols(void) {
     native_open = NULL;
     native_close = NULL;
     native_persist = NULL;
+    native_kv_set = NULL;
     native_execute = NULL;
     native_run_sql_param_bin = NULL;
+    native_kv_read_v1 = NULL;
     native_free_string = NULL;
     native_free_bytes = NULL;
     native_last_error = NULL;
@@ -112,6 +121,7 @@ int talon_sdk_load(const char *library_path) {
     LOAD_REQUIRED(native_open, "talon_open", talon_open_fn);
     LOAD_REQUIRED(native_close, "talon_close", talon_close_fn);
     LOAD_REQUIRED(native_persist, "talon_persist", talon_persist_fn);
+    LOAD_REQUIRED(native_kv_set, "talon_kv_set", talon_kv_set_fn);
     LOAD_REQUIRED(native_execute, "talon_execute", talon_execute_fn);
     LOAD_REQUIRED(native_run_sql_param_bin, "talon_run_sql_param_bin",
                   talon_run_sql_param_bin_fn);
@@ -127,6 +137,9 @@ int talon_sdk_load(const char *library_path) {
     /* Optional diagnostic only. Its text is never used for error classification. */
     (void)dlerror();
     *(void **)(&native_last_error) = dlsym(library, "talon_last_error");
+    (void)dlerror();
+    /* Older signed Core ABIs remain loadable. Go checks the versioned gate. */
+    *(void **)(&native_kv_read_v1) = dlsym(library, "talon_kv_read_v1");
     (void)dlerror();
     native_library = library;
     return 0;
@@ -172,6 +185,21 @@ int talon_sdk_persist(const TalonSDKHandle *handle, char *error_code,
     return result;
 }
 
+int talon_sdk_kv_set(const TalonSDKHandle *handle,
+                     const uint8_t *key, size_t key_len,
+                     const uint8_t *value, size_t value_len,
+                     int64_t ttl_secs,
+                     char *error_code, size_t error_code_len) {
+    int result = native_kv_set == NULL ? -1 :
+                 native_kv_set(handle, key, key_len, value, value_len, ttl_secs);
+    if (result != 0) {
+        capture_error_code(error_code, error_code_len);
+    } else if (error_code != NULL && error_code_len > 0) {
+        error_code[0] = '\0';
+    }
+    return result;
+}
+
 int talon_sdk_execute(const TalonSDKHandle *handle, const char *cmd_json,
                       char **out_json, char *error_code,
                       size_t error_code_len) {
@@ -192,6 +220,26 @@ int talon_sdk_run_sql_param_bin(const TalonSDKHandle *handle, const char *sql,
                      ? -1
                      : native_run_sql_param_bin(handle, sql, params, params_len,
                                                 out_data, out_len);
+    if (result != 0) {
+        capture_error_code(error_code, error_code_len);
+    } else if (error_code != NULL && error_code_len > 0) {
+        error_code[0] = '\0';
+    }
+    return result;
+}
+
+int talon_sdk_kv_read_v1(const TalonSDKHandle *handle, uint32_t operation,
+                         const uint8_t *request, size_t request_len,
+                         uint8_t **out_data, size_t *out_len,
+                         char *error_code, size_t error_code_len) {
+    if (native_kv_read_v1 == NULL) {
+        if (error_code != NULL && error_code_len > 0) {
+            (void)snprintf(error_code, error_code_len, "%s", "capability_unavailable");
+        }
+        return -1;
+    }
+    int result = native_kv_read_v1(handle, operation, request, request_len,
+                                    out_data, out_len);
     if (result != 0) {
         capture_error_code(error_code, error_code_len);
     } else if (error_code != NULL && error_code_len > 0) {

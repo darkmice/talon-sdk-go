@@ -538,10 +538,75 @@ interpolation.
 
 See `LICENSE`.
 
+## GoFrame v2 native database adapter
+
+Import `github.com/darkmice/talon-sdk-go/goframe` to register the `talon`
+driver with GoFrame `gdb`. This adapter opens an **embedded Talon database**
+through `talon.Open` and the signed native library. It does not use PgWire,
+HTTP, or a Talon Server process. Supply the same `TALON_NATIVE_*` trust policy
+used by this SDK's `Open` function.
+
+```go
+import (
+    "context"
+
+    _ "github.com/darkmice/talon-sdk-go/goframe"
+    "github.com/gogf/gf/v2/database/gdb"
+)
+
+db, err := gdb.New(gdb.ConfigNode{
+    Type: "talon",
+    Name: "/absolute/path/to/talon-data",
+})
+if err != nil { /* handle error */ }
+rows, err := db.Query(context.Background(),
+    "SELECT id, name FROM items WHERE id = ?", 1)
+_ = rows
+_ = err
+```
+
+The driver requires a Core artifact attesting `native_sql_result` v2. Core
+returns column labels, typed rows, affected rows, and generated insert ID from
+one SQL execution. Empty results retain their column labels; DECIMAL values
+remain exact strings. The adapter does not parse SQL to guess columns or add
+`RETURNING` to writes. `INSERT IGNORE` and `REPLACE` map to Talon's native
+`INSERT OR IGNORE` and `INSERT OR REPLACE`. GoFrame `Save` generates Talon's
+`ON CONFLICT` clause using the primary key or an explicit conflict target.
+`db.Begin` also requires `native_sql_session` v1.
+A GoFrame transaction uses one native handle for `BEGIN`, statements, and
+`COMMIT` or `ROLLBACK`; closing that handle rolls back a pending transaction.
+Older artifacts fail the capability check before SQL execution.
+
+GoFrame `gredis` integration is not complete. Talon's current native KV engine
+supports Redis-like string and generic key operations, while GoFrame's
+`gredis.Adapter` additionally requires native hash, list, set, sorted set,
+PubSub, and script semantics. Those capabilities must be implemented and
+versioned in Core before this package can claim complete `gredis` coverage.
+
+The SDK exposes a separate binary KV subset through `KVSetBytes`,
+`KVGetBytes`, `KVMGetBytes`, `KVExistsBytes`, `KVTypeBytes`, and `KVTTLBytes`.
+`KVBytes.Present` distinguishes a missing key from an empty value; values and
+keys retain arbitrary bytes. The read methods require an attested
+`native_kv_read` v1 capability and `native_kv_read_v1` feature. The Core
+worktree implementing `talon_kv_read_v1` marks the standalone read capability
+available and the full `native_goframe_gredis` capability gated. These reads
+still fail closed against older or unsigned artifacts. `KVTTLBytes` reports
+whole seconds and does not provide Redis
+millisecond expiry semantics. These methods are not a `gredis.Adapter`.
+
+The opt-in `TestLocalSignedCoreKVInterop` signs a clean local Core release
+library with an ephemeral test key and exercises SDK verification, public KV
+results, binary values, and restart. Supply the library, matching `talon.h`,
+and its `talon_build_manifest` JSON through
+`TALON_TEST_LOCAL_CORE_LIBRARY`, `TALON_TEST_LOCAL_CORE_HEADER`, and
+`TALON_TEST_LOCAL_CORE_BUILD_MANIFEST`. The fixture includes a test-only
+static-library placeholder and synthetic release metadata; passing it is
+local interoperability evidence, not a Talon release or production admission.
+
 ## Parameterized SQL
 
 Use `ExecParams` and `QueryParams` for positional `?` parameters. Values are
-encoded through the native `talon_execute` JSON `bind` path; SQL text is never
+encoded through the native typed SQL ABI; SQL text is never
 constructed by interpolation. `Query` and `QueryParams` reject unknown or
 malformed Talon Value tags, while the original `SQL` method remains available
 for callers that need the legacy raw result shape.
