@@ -596,7 +596,8 @@ millisecond expiry semantics. These methods are not a `gredis.Adapter`.
 
 The opt-in `TestLocalSignedCoreKVInterop` signs a clean local Core release
 library with an ephemeral test key and exercises SDK verification, public KV
-results, binary values, and restart. Supply the library, matching `talon.h`,
+results, binary values, native SQL result metadata, transaction rollback, and
+restart. Supply the library, matching `talon.h`,
 and its `talon_build_manifest` JSON through
 `TALON_TEST_LOCAL_CORE_LIBRARY`, `TALON_TEST_LOCAL_CORE_HEADER`, and
 `TALON_TEST_LOCAL_CORE_BUILD_MANIFEST`. The fixture includes a test-only

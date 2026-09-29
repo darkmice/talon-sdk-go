@@ -21,6 +21,9 @@ func (db *DB) QueryResult(sql string, params ...Value) (SQLResult, error) {
 	if strings.TrimSpace(sql) == "" {
 		return SQLResult{}, newError(CodeInvalidArgument, "sql result", "SQL is empty", nil)
 	}
+	if params == nil {
+		params = []Value{}
+	}
 	if err := db.RequireCapability("native_sql_result"); err != nil {
 		return SQLResult{}, err
 	}
