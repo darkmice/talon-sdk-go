@@ -153,6 +153,34 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 	}
 	assertKVPublicResults(t, db)
 	assertNativeKVBinaryRoundTrip(t, db)
+	if _, err := db.QueryResult("CREATE TABLE sdk_sql_live (id INT PRIMARY KEY, name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := db.QueryResult("SELECT id, name FROM sdk_sql_live WHERE id = ?", IntegerValue(99))
+	if err != nil || len(empty.Columns) != 2 || empty.Columns[0] != "id" || empty.Columns[1] != "name" || len(empty.Rows) != 0 {
+		t.Fatalf("empty SQL result = %#v, %v", empty, err)
+	}
+	firstName, err := TextValue("first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inserted, err := db.QueryResult("INSERT INTO sdk_sql_live VALUES (?, ?)", IntegerValue(1), firstName)
+	if err != nil || inserted.AffectedRows == nil || *inserted.AffectedRows != 1 {
+		t.Fatalf("insert SQL result = %#v, %v", inserted, err)
+	}
+	if _, err := db.QueryResult("BEGIN"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.QueryResult("INSERT INTO sdk_sql_live VALUES (2, 'second')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.QueryResult("ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	rolledBack, err := db.QueryResult("SELECT id FROM sdk_sql_live WHERE id = 2")
+	if err != nil || len(rolledBack.Rows) != 0 {
+		t.Fatalf("rolled-back SQL result = %#v, %v", rolledBack, err)
+	}
 	if err := db.Persist(); err != nil {
 		t.Fatal(err)
 	}
