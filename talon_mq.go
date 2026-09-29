@@ -29,7 +29,10 @@ func (db *DB) MqPublish(topic, payload string) (uint64, error) {
 	var out struct {
 		ID uint64 `json:"id"`
 	}
-	return out.ID, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.ID, nil
 }
 
 // MqPoll 拉取消息，返回原始 JSON。
@@ -58,7 +61,10 @@ func (db *DB) MqLen(topic string) (uint64, error) {
 	var out struct {
 		Len uint64 `json:"len"`
 	}
-	return out.Len, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Len, nil
 }
 
 // MqDrop 删除 topic。
@@ -94,5 +100,8 @@ func (db *DB) MqListSubscriptions(topic string) ([]string, error) {
 	var out struct {
 		Groups []string `json:"groups"`
 	}
-	return out.Groups, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out.Groups, nil
 }

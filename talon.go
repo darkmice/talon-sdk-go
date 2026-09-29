@@ -359,6 +359,15 @@ func (db *DB) RequireCapability(name string) error {
 	if name == "native_conditional_transaction_v2" && containsString(db.nativeInfo.Features, name) && containsString(db.nativeInfo.Features, "conditional_transaction_command_digest_v1") {
 		return nil
 	}
+	if name == "native_sql_session" && coreCapability.Version == 1 && containsString(db.nativeInfo.Features, "native_sql_session_v1") {
+		return nil
+	}
+	if name == "native_sql_result" && coreCapability.Version == 2 && containsString(db.nativeInfo.Features, "native_sql_result_v2") {
+		return nil
+	}
+	if name == "native_kv_read" && coreCapability.Version == 1 && containsString(db.nativeInfo.Features, "native_kv_read_v1") {
+		return nil
+	}
 	if name == "storage_conditional_point_read" && coreCapability.Version == conditionalPointReadVersion && containsString(db.nativeInfo.Features, "storage_conditional_point_read_v1") {
 		return nil
 	}
@@ -401,7 +410,10 @@ func (db *DB) Stats() (map[string]interface{}, error) {
 		return nil, err
 	}
 	var m map[string]interface{}
-	return m, json.Unmarshal(data, &m)
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // SQL 执行 SQL 语句。
@@ -441,7 +453,10 @@ func (db *DB) KvGet(key string) (*string, error) {
 	var out struct {
 		Value *string `json:"value"`
 	}
-	return out.Value, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out.Value, nil
 }
 
 // KvDel 删除键。
@@ -453,7 +468,10 @@ func (db *DB) KvDel(key string) (bool, error) {
 	var out struct {
 		Deleted bool `json:"deleted"`
 	}
-	return out.Deleted, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return false, err
+	}
+	return out.Deleted, nil
 }
 
 // KvExists 检查键是否存在。
@@ -465,7 +483,10 @@ func (db *DB) KvExists(key string) (bool, error) {
 	var out struct {
 		Exists bool `json:"exists"`
 	}
-	return out.Exists, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return false, err
+	}
+	return out.Exists, nil
 }
 
 // KvIncr 原子自增。
@@ -477,7 +498,10 @@ func (db *DB) KvIncr(key string) (int64, error) {
 	var out struct {
 		Value int64 `json:"value"`
 	}
-	return out.Value, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Value, nil
 }
 
 // KvKeys 前缀扫描。
@@ -489,7 +513,10 @@ func (db *DB) KvKeys(prefix string) ([]string, error) {
 	var out struct {
 		Keys []string `json:"keys"`
 	}
-	return out.Keys, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out.Keys, nil
 }
 
 // KvMset 批量设置键值。
@@ -528,7 +555,10 @@ func (db *DB) KvKeysMatch(pattern string) ([]string, error) {
 	var out struct {
 		Keys []string `json:"keys"`
 	}
-	return out.Keys, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out.Keys, nil
 }
 
 // KvExpire 设置 TTL。
@@ -546,7 +576,10 @@ func (db *DB) KvTtl(key string) (*uint64, error) {
 	var out struct {
 		TTL *uint64 `json:"ttl"`
 	}
-	return out.TTL, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out.TTL, nil
 }
 
 // KvIncrBy 按 delta 自增。
@@ -558,7 +591,10 @@ func (db *DB) KvIncrBy(key string, delta int64) (int64, error) {
 	var out struct {
 		Value int64 `json:"value"`
 	}
-	return out.Value, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Value, nil
 }
 
 // KvDecrBy 按 delta 自减。
@@ -570,7 +606,10 @@ func (db *DB) KvDecrBy(key string, delta int64) (int64, error) {
 	var out struct {
 		Value int64 `json:"value"`
 	}
-	return out.Value, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Value, nil
 }
 
 // KvSetNX 仅在 key 不存在时写入，返回是否成功写入。
@@ -586,7 +625,10 @@ func (db *DB) KvSetNX(key, value string, ttl *uint64) (bool, error) {
 	var out struct {
 		Set bool `json:"set"`
 	}
-	return out.Set, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return false, err
+	}
+	return out.Set, nil
 }
 
 // KvKeysLimit 分页前缀扫描（亿级安全）。
@@ -600,7 +642,10 @@ func (db *DB) KvKeysLimit(prefix string, offset, limit uint64) ([]string, error)
 	var out struct {
 		Keys []string `json:"keys"`
 	}
-	return out.Keys, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out.Keys, nil
 }
 
 // KvScanLimit 分页 KV 扫描，返回原始 JSON。
@@ -619,7 +664,10 @@ func (db *DB) KvCount() (uint64, error) {
 	var out struct {
 		Count uint64 `json:"count"`
 	}
-	return out.Count, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Count, nil
 }
 
 // ── Vector ──
@@ -659,7 +707,10 @@ func (db *DB) VectorCount(name string) (uint64, error) {
 	var out struct {
 		Count uint64 `json:"count"`
 	}
-	return out.Count, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Count, nil
 }
 
 // VectorBatchInsert 批量插入向量。
@@ -673,7 +724,10 @@ func (db *DB) VectorBatchInsert(name string, items []map[string]interface{}) (ui
 	var out struct {
 		Inserted uint64 `json:"inserted"`
 	}
-	return out.Inserted, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Inserted, nil
 }
 
 // VectorBatchSearch 批量向量搜索。
@@ -703,7 +757,10 @@ func (db *DB) ClusterStatus() (map[string]interface{}, error) {
 		return nil, err
 	}
 	var m map[string]interface{}
-	return m, json.Unmarshal(data, &m)
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // ClusterRole 查询当前集群角色。
@@ -747,7 +804,10 @@ func (db *DB) DatabaseStats() (map[string]interface{}, error) {
 		return nil, err
 	}
 	var m map[string]interface{}
-	return m, json.Unmarshal(data, &m)
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // HealthCheck 执行健康检查。
@@ -757,5 +817,8 @@ func (db *DB) HealthCheck() (map[string]interface{}, error) {
 		return nil, err
 	}
 	var m map[string]interface{}
-	return m, json.Unmarshal(data, &m)
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }

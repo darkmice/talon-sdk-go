@@ -111,7 +111,10 @@ func (db *DB) TsPurgeExpired(name string) (uint64, error) {
 	var out struct {
 		Purged uint64 `json:"purged"`
 	}
-	return out.Purged, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Purged, nil
 }
 
 // TsPurgeByTag 按标签清理数据，返回清理数量。
@@ -125,5 +128,8 @@ func (db *DB) TsPurgeByTag(name string, tagFilters []interface{}) (uint64, error
 	var out struct {
 		Purged uint64 `json:"purged"`
 	}
-	return out.Purged, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Purged, nil
 }

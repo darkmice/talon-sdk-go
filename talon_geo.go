@@ -42,7 +42,10 @@ func (db *DB) GeoAddBatch(name string, members []GeoMember) (int, error) {
 	var out struct {
 		Count int `json:"count"`
 	}
-	return out.Count, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, err
+	}
+	return out.Count, nil
 }
 
 // GeoPos 查询成员位置。返回 (lng, lat, found)。
@@ -61,7 +64,10 @@ func (db *DB) GeoPos(name, key string) (float64, float64, bool, error) {
 		Lng float64 `json:"lng"`
 		Lat float64 `json:"lat"`
 	}
-	return out.Lng, out.Lat, true, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return 0, 0, false, err
+	}
+	return out.Lng, out.Lat, true, nil
 }
 
 // GeoDel 删除成员，返回是否存在并被删除。
@@ -75,7 +81,10 @@ func (db *DB) GeoDel(name, key string) (bool, error) {
 	var out struct {
 		Deleted bool `json:"deleted"`
 	}
-	return out.Deleted, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return false, err
+	}
+	return out.Deleted, nil
 }
 
 // GeoDist 计算两点距离。unit: "m"/"km"/"mi"。返回 (dist, found)。
@@ -160,5 +169,8 @@ func (db *DB) GeoMembers(name string) ([]string, error) {
 	var out struct {
 		Members []string `json:"members"`
 	}
-	return out.Members, json.Unmarshal(data, &out)
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out.Members, nil
 }

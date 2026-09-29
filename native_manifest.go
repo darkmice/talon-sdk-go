@@ -253,6 +253,17 @@ var sdkRequiredSymbols = []string{
 	"talon_execute",
 }
 
+// Core's native KV read v1 adds one symbol to the original signed ABI set.
+// Both complete, exact sets are accepted so existing trusted bundles remain
+// loadable while newer bundles can be admitted independently by capability.
+func supportedNativeSymbolSet(symbols []string) bool {
+	if sameStringSet(symbols, sdkRequiredSymbols) {
+		return true
+	}
+	withKVRead := append(append([]string(nil), sdkRequiredSymbols...), "talon_kv_read_v1")
+	return sameStringSet(symbols, withKVRead)
+}
+
 type verifiedNative struct {
 	Info                 NativeInfo
 	Manifest             nativeManifest
@@ -489,7 +500,7 @@ func validateNativePolicy(policy NativePolicy) error {
 	}
 	seen := map[string]struct{}{}
 	for _, capability := range policy.RequiredCapabilities {
-		if capability != "storage_conditional_batch_v1" && capability != "storage_conditional_point_read" && capability != "storage_conditional_snapshot_read" && capability != "storage_conditional_snapshot_read_v2" && capability != "revision_stream" {
+		if capability != "storage_conditional_batch_v1" && capability != "storage_conditional_point_read" && capability != "storage_conditional_snapshot_read" && capability != "storage_conditional_snapshot_read_v2" && capability != "revision_stream" && capability != "native_kv_read" {
 			return fmt.Errorf("unknown required native capability %q", capability)
 		}
 		if _, exists := seen[capability]; exists {
@@ -513,7 +524,7 @@ func validateNativeManifest(manifest nativeManifest, manifestName string, platfo
 	if manifest.ABI.Profile != policy.ExpectedABIProfile || manifest.ABI.Version != policy.ExpectedABIVersion || manifest.ABI.HeaderSHA256 != policy.ExpectedHeaderSHA256 {
 		return fmt.Errorf("Core ABI identity does not match trusted policy")
 	}
-	if !sameStringSet(manifest.ABI.RequiredSymbols, sdkRequiredSymbols) {
+	if !supportedNativeSymbolSet(manifest.ABI.RequiredSymbols) {
 		return fmt.Errorf("Core ABI required symbol set does not match this SDK")
 	}
 	if manifest.Build.Target != platform.Target || manifest.Build.Runner != platform.Runner || manifest.Build.Source == "" || manifest.Build.WorkflowRunID == "" || manifest.Build.Rustc == "" || manifest.Build.Cargo == "" || manifest.Build.Reproducibility == "" || !sameStrings(manifest.Build.Command, []string{"build", "--locked", "--release", "--lib"}) {
@@ -789,7 +800,7 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 	if (build.ManifestVersion != 1 && build.ManifestVersion != 2) || build.CoreSemver != external.Source.CargoVersion || build.GitCommit != external.Source.Commit || build.GitDirty == nil || *build.GitDirty || build.Target != external.Build.Target || build.CargoLockSHA256 != external.Source.CargoLockSHA256 || build.HeaderSHA256 != external.ABI.HeaderSHA256 {
 		return build, fmt.Errorf("Core source/build identity differs from signed artifact metadata")
 	}
-	if build.ABI.Profile != external.ABI.Profile || build.ABI.Version != external.ABI.Version || !sameStringSet(build.ABI.RequiredSymbols, external.ABI.RequiredSymbols) || !sameStringSet(build.ABI.RequiredSymbols, sdkRequiredSymbols) {
+	if build.ABI.Profile != external.ABI.Profile || build.ABI.Version != external.ABI.Version || !sameStringSet(build.ABI.RequiredSymbols, external.ABI.RequiredSymbols) || !supportedNativeSymbolSet(build.ABI.RequiredSymbols) {
 		return build, fmt.Errorf("Core runtime ABI differs from signed artifact metadata")
 	}
 	seenFeatures := map[string]struct{}{}
@@ -832,6 +843,12 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 			return build, fmt.Errorf("Core build manifest contains ambiguous versions of capability %q", name)
 		}
 	}
+	_, hasKVRead := capabilities["native_kv_read@1"]
+	kvReadFeature := containsString(build.Features, "native_kv_read_v1")
+	kvReadSymbol := containsString(build.ABI.RequiredSymbols, "talon_kv_read_v1")
+	if hasKVRead != kvReadFeature || hasKVRead != kvReadSymbol {
+		return build, fmt.Errorf("native_kv_read capability, feature, and ABI symbol do not match")
+	}
 	conditionalV2, ok := capabilities["native_conditional_transaction_v2@2"]
 	if !ok || conditionalV2.Version != 2 || conditionalV2.Status != "available" {
 		return build, fmt.Errorf("native_conditional_transaction_v2 is not available to this SDK")
@@ -865,7 +882,7 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 
 func verifyRequiredRuntimeCapabilities(build coreBuildManifest, required []string) error {
 	for _, name := range required {
-		if name != "revision_stream" && name != "storage_conditional_point_read" && name != "storage_conditional_snapshot_read" && name != "storage_conditional_snapshot_read_v2" {
+		if name != "revision_stream" && name != "storage_conditional_point_read" && name != "storage_conditional_snapshot_read" && name != "storage_conditional_snapshot_read_v2" && name != "native_kv_read" {
 			continue
 		}
 		capabilityName, version := name, 0
@@ -877,10 +894,14 @@ func verifyRequiredRuntimeCapabilities(build coreBuildManifest, required []strin
 			version = conditionalPointReadVersion
 		} else if name == "revision_stream" {
 			version = revisionStreamVersion
+		} else if name == "native_kv_read" {
+			version = 1
 		}
 		found := findNativeCapability(build.Capabilities, capabilityName, version)
 		available := false
-		if name == "revision_stream" {
+		if name == "native_kv_read" {
+			available = found != nil && found.Status == "available" && containsString(build.Features, "native_kv_read_v1") && containsString(build.ABI.RequiredSymbols, "talon_kv_read_v1")
+		} else if name == "revision_stream" {
 			available = found != nil && found.Version == revisionStreamVersion && found.Status == "available" && containsString(build.Features, "revision_stream_v1") && containsString(build.Features, "revision_stream_v2_mmr_proof")
 		} else if name == "storage_conditional_point_read" {
 			available = found != nil && found.Version == conditionalPointReadVersion && found.Status == "available" && containsString(build.Features, "storage_conditional_point_read_v1")
