@@ -213,7 +213,7 @@ func TestNativeSaveUsesTalonConflictSyntax(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if statement != "ON CONFLICT (`id`) DO UPDATE SET `id`=EXCLUDED.`id`,`name`=EXCLUDED.`name`" {
+	if statement != "ON CONFLICT (`id`) DO UPDATE SET `name`=EXCLUDED.`name`" {
 		t.Fatalf("upsert=%q", statement)
 	}
 }

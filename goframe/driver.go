@@ -97,7 +97,11 @@ func (d *Driver) FormatUpsert(columns []string, _ gdb.List, option gdb.DoInsertO
 			if !identifier.MatchString(column) {
 				return "", fmt.Errorf("talon: invalid column identifier %q", column)
 			}
-			if d.IsSoftCreatedFieldName(column) {
+			conflictColumn := false
+			for _, target := range option.OnConflict {
+				conflictColumn = conflictColumn || strings.EqualFold(target, column)
+			}
+			if conflictColumn || d.IsSoftCreatedFieldName(column) {
 				continue
 			}
 			assignments = append(assignments, "`"+column+"`=EXCLUDED.`"+column+"`")
@@ -155,6 +159,12 @@ func (d *Driver) Tables(ctx context.Context, schema ...string) ([]string, error)
 func (d *Driver) TableFields(ctx context.Context, table string, schema ...string) (map[string]*gdb.TableField, error) {
 	if err := checkSchema(schema); err != nil {
 		return nil, err
+	}
+	// GoFrame passes its own quoted table name to DoInsert when Model.Save
+	// needs the primary key. Strip only one complete pair of driver quotes;
+	// the identifier check below still rejects expressions and schemas.
+	if strings.HasPrefix(table, "`") && strings.HasSuffix(table, "`") && len(table) >= 2 {
+		table = table[1 : len(table)-1]
 	}
 	if !identifier.MatchString(table) {
 		return nil, fmt.Errorf("talon: invalid table identifier %q", table)
