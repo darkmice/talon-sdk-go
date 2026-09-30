@@ -88,18 +88,45 @@ latency, so a number above one means SQLite was faster.
 | Filtered INNER JOIN | 100 | 7,551.17 | 1,473.62 | 5.12× |
 | GROUP BY/HAVING | 100 | 2,891.25 | 268.29 | 10.78× |
 
-The `EXPLAIN` outputs give a concrete lead for the larger gaps. For the `IN`
-subquery, Talon reports a full scan plus complex filter, whereas SQLite
-searches `items` through `idx_items_group`. For `DISTINCT` and GROUP BY/HAVING,
-Talon reports a full scan and sort while SQLite scans that index as a covering
-index. Talon's `EXPLAIN` is a planner summary, so these descriptions should be
-validated with targeted profiling before assigning exact costs to each step.
+The execution code explains the larger gaps. Talon resolves `IN (SELECT ...)`
+to a value list but does not turn that list into an index lookup; the remaining
+WHERE condition takes the row-scan path. `DISTINCT` materializes and sorts all
+rows before deduplication, and GROUP BY reads and decodes each row into a hash
+aggregate. The filtered JOIN pushes the right-side predicate but still scans
+all 10,000 left rows. SQLite uses the `group_id` index for the subquery and a
+covering index scan for `DISTINCT` and GROUP BY/HAVING. Talon's `EXPLAIN` is a
+static summary that ignores JOIN and GROUP BY details; its output is not a
+complete record of the path actually executed.
+
+Three further runs with the same dataset isolate two Talon paths. The p50
+figures below are medians of those three runs. `SELECT *` returns four columns,
+so its speed advantage over the two-column projection cannot be explained by
+less result materialization.
+
+| Talon query shape | p50 µs | Execution distinction |
+| --- | ---: | --- |
+| `SELECT * ... WHERE id=5000` | 1.25 | Dedicated primary-key fast path |
+| `SELECT id,name ... WHERE id=5000` | 9.67 | General parse and projection path |
+| `SELECT id ... WHERE group_id=42` | 74.33 | Secondary-index lookup |
+| `SELECT id ... WHERE group_id IN (SELECT ...)` | 1,876.04 | Value-list filter after row scan |
+| `COUNT(1)` / `COUNT(*)` | 648.04 / 659.54 | Both normalize to prefix counting |
+
+The current `count_prefix` implementation iterates over matching keys, so
+the count path is O(N) time despite using O(1) memory. SQLite's `COUNT(*)`
+was 5.58 µs p50 in these diagnostic runs; its `COUNT(1)` was 85.50 µs. These
+SQL spellings are equivalent for this table, but they hit different SQLite
+optimizations. The previous historical Talon-vs-SQLite headline measured
+`SELECT *` through Talon's fast path; its `SQL INSERT (batch)` label actually
+covered individual `run_sql` calls, without equivalent durability verification.
+It cannot be carried over to the projected and analytical SQL queries above.
 
 This comparison is Core versus SQLite's Rust API, not GoFrame versus a SQLite
 GoFrame driver. SQLite used its default connection settings; the workload is
 warm, single-threaded, read-only, and small enough to fit in memory. It does
 not establish write durability, concurrent throughput, large-data behavior,
 or a general database ranking. DuckDB was not locally available and was not
-measured. Raw timings and plans are in `perf/core-sqlite-e8605c0-run*.csv` and
-`perf/core-sqlite-e8605c0-run*.plans.txt`; the reproducible probe is
-`examples/sql_sqlite_comparison.rs` at talon-core `21ac88b`.
+measured. Raw comparison timings and plans are in
+`perf/core-sqlite-e8605c0-run*.csv` and
+`perf/core-sqlite-e8605c0-run*.plans.txt`; the read-path diagnostics are in
+`perf/core-sqlite-readpath-run*.csv`. The reproducible probe is
+`examples/sql_sqlite_comparison.rs` in talon-core.
