@@ -34,3 +34,5 @@ result into Go rows before iteration. No concurrent workload or large-result
 latency and allocation budget has been verified. For simple-column `DISTINCT`,
 Core hashes selected source values without allocating projected duplicate
 rows, but this local test does not measure end-to-end throughput.
+The local SQL latency and allocation snapshot is in
+[SQL_PERFORMANCE.md](SQL_PERFORMANCE.md).

@@ -1,0 +1,4 @@
+case,output_rows,mean_us,p50_us,p99_us,max_us
+indexed_pk,1,10.75,9.79,41.12,44.42
+count_1,1,713.70,644.04,1168.21,1241.75
+in_subquery,100,2010.66,1920.17,2488.88,2745.79

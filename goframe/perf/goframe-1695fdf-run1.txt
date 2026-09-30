@@ -1,0 +1,15 @@
+        BenchmarkLocalSignedCoreGoFrameSQL/indexed_pk-12         	     100	     86151 ns/op	        72.96 p50-us	       285.2 p99-us	   36476 B/op	     902 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/indexed_pk-12         	     100	     75830 ns/op	        70.50 p50-us	       194.5 p99-us	   36856 B/op	     902 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/indexed_pk-12         	     100	     81349 ns/op	        71.50 p50-us	       243.0 p99-us	   36088 B/op	     902 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/projected_distinct-12 	     100	   3591401 ns/op	      3525 p50-us	      4543 p99-us	  456592 B/op	    9664 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/projected_distinct-12 	     100	   3818860 ns/op	      3582 p50-us	      9166 p99-us	  455400 B/op	    9663 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/projected_distinct-12 	     100	   3632354 ns/op	      3563 p50-us	      4556 p99-us	  456200 B/op	    9664 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/filtered_join-12      	     100	   9730518 ns/op	      9522 p50-us	     11442 p99-us	  877964 B/op	   18845 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/filtered_join-12      	     100	   9388021 ns/op	      9247 p50-us	     11382 p99-us	  874492 B/op	   18843 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/filtered_join-12      	     100	  10380638 ns/op	      9292 p50-us	     20146 p99-us	  878295 B/op	   18845 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/group_having-12       	     100	   4102235 ns/op	      4032 p50-us	      5002 p99-us	  837936 B/op	   18515 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/group_having-12       	     100	   4148058 ns/op	      4142 p50-us	      4931 p99-us	  836640 B/op	   18514 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/group_having-12       	     100	   4013232 ns/op	      3955 p50-us	      4911 p99-us	  835804 B/op	   18513 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/in_subquery-12        	     100	   5710071 ns/op	      3078 p50-us	     32219 p99-us	  462756 B/op	    9836 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/in_subquery-12        	     100	   2933122 ns/op	      2712 p50-us	      9003 p99-us	  464337 B/op	    9836 allocs/op
+        BenchmarkLocalSignedCoreGoFrameSQL/in_subquery-12        	     100	   2810056 ns/op	      2671 p50-us	      3850 p99-us	  462470 B/op	    9836 allocs/op

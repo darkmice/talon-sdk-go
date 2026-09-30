@@ -225,4 +225,15 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 		t.Fatalf("GoFrame native integration: %v\n%s", err, output)
 	}
 	t.Logf("GoFrame native integration:\n%s", output)
+	if os.Getenv("TALON_TEST_GOFRAME_BENCH") == "1" {
+		bench := exec.Command("go", "test", "./goframe", "-run", "^$", "-bench", "^BenchmarkLocalSignedCoreGoFrameSQL$", "-benchtime=100x", "-benchmem", "-count=3")
+		bench.Env = append(append([]string(nil), cmd.Env...),
+			"TALON_GOFRAME_LIVE_DB="+filepath.Join(t.TempDir(), "goframe-bench"),
+		)
+		output, err := bench.CombinedOutput()
+		if err != nil {
+			t.Fatalf("GoFrame native benchmark: %v\n%s", err, output)
+		}
+		t.Logf("GoFrame native benchmark:\n%s", output)
+	}
 }
