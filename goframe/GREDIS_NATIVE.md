@@ -17,9 +17,10 @@ Consequently, a `gredis`
 implementation that merely forwards those commands would compile but would
 not satisfy GoFrame's Redis semantics.
 
-GoFrame v2.8.3 declares 107 group methods: Generic 21, String 19, Hash 13,
-List 18, Set 14, SortedSet 13, PubSub 3, and Script 6. `Do`, `Conn`, and the
-connection's subscription/receive operations are additional requirements.
+The locked GoFrame v2.8.3 source declares 111 group methods: Generic 23,
+String 19, Hash 14, List 17, Set 15, SortedSet 14, PubSub 3, and Script 6.
+`Do`, `Conn`, `Close`, and the connection's subscription/receive operations
+are additional requirements.
 The native read subset covers only five commands; it cannot satisfy any group
 interface in full.
 
