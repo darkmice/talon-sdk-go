@@ -37,36 +37,35 @@ func (db *DB) QueryResult(sql string, params ...Value) (SQLResult, error) {
 }
 
 func decodeSQLResult(data json.RawMessage) (SQLResult, error) {
-	var fields map[string]json.RawMessage
-	if err := decodeStrictJSON(data, &fields); err != nil {
-		return SQLResult{}, newError(CodeProtocolViolation, "sql result", "invalid native SQL result", err)
-	}
-	for _, key := range []string{"protocol_version", "columns", "rows", "affected_rows", "last_insert_id"} {
-		if _, ok := fields[key]; !ok {
-			return SQLResult{}, newError(CodeProtocolViolation, "sql result", "native SQL result omitted "+key, nil)
-		}
-	}
 	var wire struct {
 		ProtocolVersion uint64              `json:"protocol_version"`
 		Columns         []string            `json:"columns"`
 		Rows            [][]json.RawMessage `json:"rows"`
-		AffectedRows    *uint64             `json:"affected_rows"`
-		LastInsertID    *int64              `json:"last_insert_id"`
+		AffectedRows    json.RawMessage     `json:"affected_rows"`
+		LastInsertID    json.RawMessage     `json:"last_insert_id"`
 	}
 	if err := decodeStrictJSON(data, &wire); err != nil {
 		return SQLResult{}, newError(CodeProtocolViolation, "sql result", "invalid native SQL result", err)
 	}
-	if wire.ProtocolVersion != 2 || wire.Columns == nil || wire.Rows == nil {
+	if wire.ProtocolVersion != 2 || wire.Columns == nil || wire.Rows == nil || wire.AffectedRows == nil || wire.LastInsertID == nil {
 		return SQLResult{}, newError(CodeProtocolViolation, "sql result", "native SQL result omitted required v2 fields", nil)
 	}
-	result := SQLResult{Columns: wire.Columns, Rows: make([]Row, len(wire.Rows)), AffectedRows: wire.AffectedRows, LastInsertID: wire.LastInsertID}
+	result := SQLResult{Columns: wire.Columns, Rows: make([]Row, len(wire.Rows))}
+	if err := json.Unmarshal(wire.AffectedRows, &result.AffectedRows); err != nil {
+		return SQLResult{}, newError(CodeProtocolViolation, "sql result", "invalid affected_rows", err)
+	}
+	if err := json.Unmarshal(wire.LastInsertID, &result.LastInsertID); err != nil {
+		return SQLResult{}, newError(CodeProtocolViolation, "sql result", "invalid last_insert_id", err)
+	}
 	for i, row := range wire.Rows {
 		if len(row) != len(wire.Columns) {
 			return SQLResult{}, newError(CodeProtocolViolation, "sql result", fmt.Sprintf("row %d width differs from columns", i), nil)
 		}
 		result.Rows[i] = make(Row, len(row))
 		for j, cell := range row {
-			value, err := decodeCell(cell)
+			// The strict pass above already checked every nested JSON key and
+			// value, including this tagged cell.
+			value, err := decodeCellValidated(cell)
 			if err != nil {
 				return SQLResult{}, newError(CodeProtocolViolation, "sql result", fmt.Sprintf("row %d column %d is invalid", i, j), err)
 			}

@@ -103,12 +103,23 @@ func encodeParamValue(value interface{}) (Value, error) {
 // high-level execute protocol. The binary Query API remains the production
 // path; this helper is retained for strict protocol tests and compatibility.
 func decodeCell(raw json.RawMessage) (Value, error) {
+	return decodeCellWith(raw, decodeStrictJSON)
+}
+
+// decodeCellValidated is used only after the containing payload passed the
+// recursive strict JSON check. The public compatibility decoder still checks
+// standalone cells on its own.
+func decodeCellValidated(raw json.RawMessage) (Value, error) {
+	return decodeCellWith(raw, json.Unmarshal)
+}
+
+func decodeCellWith(raw json.RawMessage, decode func([]byte, interface{}) error) (Value, error) {
 	var text string
 	if bytes.Equal(bytes.TrimSpace(raw), []byte(`"Null"`)) {
 		return NullValue(), nil
 	}
 	var object map[string]json.RawMessage
-	if err := decodeStrictJSON(raw, &object); err != nil || len(object) != 1 {
+	if err := decode(raw, &object); err != nil || len(object) != 1 {
 		return Value{}, fmt.Errorf("invalid tagged value")
 	}
 	for tag, payload := range object {
@@ -142,7 +153,7 @@ func decodeCell(raw json.RawMessage) (Value, error) {
 			return BooleanValue(value), nil
 		case "Blob":
 			var octets []int
-			if err := decodeStrictJSON(payload, &octets); err != nil {
+			if err := decode(payload, &octets); err != nil {
 				return Value{}, fmt.Errorf("invalid blob payload: %w", err)
 			}
 			data := make([]byte, len(octets))
@@ -157,13 +168,13 @@ func decodeCell(raw json.RawMessage) (Value, error) {
 			return JSONValue(payload)
 		case "Vector":
 			var vector []float32
-			if err := decodeStrictJSON(payload, &vector); err != nil {
+			if err := decode(payload, &vector); err != nil {
 				return Value{}, err
 			}
 			return VectorValue(vector)
 		case "Timestamp", "Time", "Date":
 			var number json.Number
-			if err := decodeStrictJSON(payload, &number); err != nil {
+			if err := decode(payload, &number); err != nil {
 				return Value{}, err
 			}
 			n, err := strconv.ParseInt(number.String(), 10, 64)
@@ -183,13 +194,13 @@ func decodeCell(raw json.RawMessage) (Value, error) {
 			}
 		case "GeoPoint":
 			var pair []float64
-			if err := decodeStrictJSON(payload, &pair); err != nil || len(pair) != 2 {
+			if err := decode(payload, &pair); err != nil || len(pair) != 2 {
 				return Value{}, fmt.Errorf("invalid GeoPoint payload")
 			}
 			return GeoPointValue(pair[0], pair[1])
 		case "Decimal":
 			var literal string
-			if err := decodeStrictJSON(payload, &literal); err != nil {
+			if err := decode(payload, &literal); err != nil {
 				return Value{}, fmt.Errorf("invalid decimal payload")
 			}
 			return decimalFromText(literal)

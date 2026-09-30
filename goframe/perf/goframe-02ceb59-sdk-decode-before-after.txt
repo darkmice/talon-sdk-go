@@ -1,0 +1,36 @@
+Local signed Core SDK decode comparison, 2026-10-01
+
+Core commit: 02ceb599a6fb092d3403e88114153c936f070c7b
+Core artifact: release libtalon.dylib, self-attested clean, signed by the SDK
+test fixture with an ephemeral key. Same Core binary and GoFrame data fixture
+on both sides: 10,000 items, 100 groups. Go 1.22.0, macOS arm64.
+Benchmark: 20 timed calls per case after warmup, three repetitions. Setup and
+local signing are excluded. The direct case uses database/sql without GoFrame
+model materialization; both cases consume the full 100-row result.
+
+Before SDK decoder change:
+direct_native_group_having  p50-us=3613,2122,2089  B/op=789946,790041,790018  allocs/op=18140,18139,18140
+group_having                p50-us=2307,2222,2239  B/op=832920,833008,829108  allocs/op=18512,18512,18510
+
+After SDK decoder change:
+direct_native_group_having  p50-us=1922,1701,1605  B/op=344847,344868,344806  allocs/op=10051,10051,10051
+group_having                p50-us=1734,1676,1714  B/op=387075,387203,385203  allocs/op=10423,10424,10423
+
+Independent SDK benchmark using an equivalent 100-row, two-integer-column
+native SQL v2 payload (100 calls, three repetitions):
+decodeSQLResult before  ns/op=745418,730754,707266  B/op=711185,711156,711149  allocs/op=14480,14480,14480
+decodeSQLResult after   ns/op=326773,323490,327884  B/op=266743,266708,266705  allocs/op=6393,6393,6393
+single_strict_pass      ns/op=145625,148042,144355  B/op=63449,63448,63448  allocs/op=3285,3285,3285
+
+The SDK decoder now makes one recursive strict JSON decode call for the complete
+result, then parses already-validated tagged cells without rescanning them.
+Standalone cell decoding remains strict. Missing/unknown metadata, duplicate
+keys including nested Jsonb, numeric overflow, row width, and every cell kind
+have regression tests. The end-to-end allocation reduction (about 8,089 per
+call) agrees with the isolated decoder reduction (8,087 per call); this is
+strong attribution for the allocation change, not a full latency profile.
+
+Go's -memprofile flag caused `signal: killed` even for a goframe test process
+that ran zero benchmarks. No pprof attribution is claimed. p99 at 20 samples
+is especially unstable. This is local single-caller evidence, not a release
+artifact or concurrent-throughput result.

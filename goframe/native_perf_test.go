@@ -86,6 +86,28 @@ func BenchmarkLocalSignedCoreGoFrameSQL(b *testing.B) {
 				Fields("i.id,g.label").Where("g.label", "label42").Order("i.id").All()
 			return err
 		}},
+		{"direct_native_group_having", func() error {
+			rows, err := nativeDB.QueryContext(ctx, "SELECT group_id,COUNT(*) AS n FROM perf_items GROUP BY group_id HAVING COUNT(*) > ? ORDER BY group_id", 1)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			count := 0
+			for rows.Next() {
+				var groupID, n int64
+				if err := rows.Scan(&groupID, &n); err != nil {
+					return err
+				}
+				count++
+			}
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			if count != 100 {
+				return fmt.Errorf("unexpected group count: %d", count)
+			}
+			return nil
+		}},
 		{"group_having", func() error {
 			_, err := db.Model("perf_items").Ctx(ctx).Fields("group_id,COUNT(*) AS n").
 				Group("group_id").Having("COUNT(*) > ?", 1).Order("group_id").All()

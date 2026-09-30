@@ -226,7 +226,23 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 	}
 	t.Logf("GoFrame native integration:\n%s", output)
 	if os.Getenv("TALON_TEST_GOFRAME_BENCH") == "1" {
-		bench := exec.Command("go", "test", "./goframe", "-run", "^$", "-bench", "^BenchmarkLocalSignedCoreGoFrameSQL$", "-benchtime=100x", "-benchmem", "-count=3")
+		benchFilter := os.Getenv("TALON_TEST_GOFRAME_BENCH_FILTER")
+		if benchFilter == "" {
+			benchFilter = "^BenchmarkLocalSignedCoreGoFrameSQL$"
+		}
+		benchTime := os.Getenv("TALON_TEST_GOFRAME_BENCH_TIME")
+		if benchTime == "" {
+			benchTime = "100x"
+		}
+		benchCount := os.Getenv("TALON_TEST_GOFRAME_BENCH_COUNT")
+		if benchCount == "" {
+			benchCount = "3"
+		}
+		benchArgs := []string{"test", "./goframe", "-run", "^$", "-bench", benchFilter, "-benchtime=" + benchTime, "-benchmem", "-count=" + benchCount}
+		if profile := os.Getenv("TALON_TEST_GOFRAME_MEMPROFILE"); profile != "" {
+			benchArgs = append(benchArgs, "-memprofile="+profile)
+		}
+		bench := exec.Command("go", benchArgs...)
 		bench.Env = append(append([]string(nil), cmd.Env...),
 			"TALON_GOFRAME_LIVE_DB="+filepath.Join(t.TempDir(), "goframe-bench"),
 		)

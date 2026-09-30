@@ -281,3 +281,27 @@ measure repeated warm queries. A write to any Talon keyspace invalidates that
 cache through the shared storage sequence, so mixed write workloads still
 need a separate performance check. These are local test signatures, not a
 talon-bin release or production artifact.
+
+## SDK native SQL result decoding, 2026-10-01
+
+The GROUP BY query through direct `database/sql` used about 18,140 Go
+allocations per call, versus about 18,512 through GoFrame. A separate SDK
+benchmark with the same 100-row/two-integer-column result shape attributed
+14,480 allocations to `decodeSQLResult`. The decoder had been calling the
+strict JSON decoder twice on the whole result and again on each tagged cell.
+It now makes one whole-result strict decode call and parses cells already
+covered by that validation without another strict decode.
+
+Using the same clean, locally signed Core `02ceb59` artifact and GoFrame data,
+three 20-call repetitions gave 18,510–18,512 → 10,423–10,424 allocations per
+GoFrame GROUP BY call. Median p50 changed from 2,239 to 1,714 µs, while
+median allocated bytes changed from 832,920 to 387,075 per call. The isolated
+SDK decoder changed from 14,480 to 6,393 allocations per call; its 8,087
+allocation reduction closely matches the end-to-end reduction. Strictness
+regressions cover missing/unknown result fields, duplicate nested keys,
+numeric overflow, row width, and every tagged cell kind. The raw numbers and
+method are in `perf/goframe-02ceb59-sdk-decode-before-after.txt`.
+
+Go's `-memprofile` flag ended with `signal: killed` even on a `goframe` test
+running no benchmarks, so no pprof profile was available. The p50 difference
+is a small local sample; concurrency and large results remain unmeasured.
