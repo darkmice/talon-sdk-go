@@ -130,3 +130,35 @@ measured. Raw comparison timings and plans are in
 `perf/core-sqlite-e8605c0-run*.plans.txt`; the read-path diagnostics are in
 `perf/core-sqlite-readpath-run*.csv`. The reproducible probe is
 `examples/sql_sqlite_comparison.rs` in talon-core.
+
+## Core read-path optimization, 2026-09-30
+
+Core `6c78f4c` extends its existing literal primary-key fast path to
+simple column projections and passes small positive `IN` lists, including
+resolved subquery values, to the primary or secondary index. Larger lists
+retain the row-scan path to avoid many random probes. The comparison program
+was rerun on the same machine and dataset, with three fresh processes and 100
+timed operations per query in each process. Values are medians of per-run p50
+latencies in microseconds; before values are from the earlier Core comparison.
+
+| Query | Before Talon | After Talon | Improvement | SQLite in after runs |
+| --- | ---: | ---: | ---: | ---: |
+| Literal projected primary-key read | 9.75 | 1.50 | 6.50× | 5.42 |
+| `IN (SELECT ...)`, 100 results | 1,896.50 | 119.04 | 15.93× | 29.33 |
+
+The optimized primary-key result uses Talon's literal-query fast path. SQLite
+is prepared on each call in this probe, while a reused SQLite prepared
+statement has a different timing boundary. GoFrame uses bound parameters and
+its native result contract, so this literal fast-path improvement has **not**
+been verified through GoFrame. The indexed `IN` path is shared by bound SELECT
+execution, but its GoFrame latency also requires a new signed-Core run. The
+other four query shapes were not targeted and remain in roughly the previous
+latency bands. `COUNT`, covering-index DISTINCT/GROUP BY, JOIN order, and Go
+bridge allocations remain separate optimization work.
+
+The after-run raw timings are in `perf/core-sqlite-optimized-run*.csv` and the
+static plan summaries in `perf/core-sqlite-optimized-plans.txt`. The Core
+changes passed 819 SQL unit tests before the probe-count guard; targeted
+transaction, wide-list fallback, and projection regressions passed after it.
+These are local Core measurements, not a new
+signed GoFrame or release-performance result.
