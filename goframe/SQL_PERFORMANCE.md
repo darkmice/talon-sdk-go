@@ -201,3 +201,30 @@ values, which is not a general table-row count. A constant-time exact `COUNT(*)`
 therefore needs a separate row-count invariant maintained across inserts,
 replacements, deletes, transactions, and reopened engines; using an arbitrary
 column statistic would risk wrong answers.
+
+## Covering-index DISTINCT experiment, 2026-09-30
+
+Simple `SELECT DISTINCT group_id FROM items ORDER BY group_id` now reads only
+the existing integer index. It seeks to the next distinct value rather than
+decoding every indexed row; after 256 distinct values it switches to one
+ordered index scan so an all-unique workload does not pay for 10,000 separate
+seeks. The route applies only to a single indexed integer projection without
+WHERE, transaction overlay, `DISTINCT ON`, or unrelated ordering. NULL ordering
+and pagination follow the existing query semantics. Other shapes retain the
+general SELECT path.
+
+On the 10,000-row/100-group fixture, three pre-change p50s were 2,750.83,
+2,624.62, and 2,670.21 µs (median 2,670.21). Three final p50s were 74.88,
+76.38, and 79.50 µs (median 76.38), about 35× faster. SQLite's final-run
+median was 230.54 µs. The benchmark verifies equal result values on every
+run; its timing includes parsing and full result materialization.
+
+With 10,000 unique integer values, the final indexed route returned 10,000
+rows in 1,046.50, 1,051.71, and 1,235.54 µs p50 (median 1,051.71). The
+same Talon query without that secondary index had a 2,749.33 µs median, though
+one of its three runs showed substantial machine noise. SQLite's indexed
+median was 878.92 µs. The raw measurements are in
+`perf/core-sqlite-distinct-route.csv`, and the high-cardinality probe is
+reproducible with `sql_sqlite_comparison 10000 100 distinct_cardinality`.
+These are Core-only results, not signed GoFrame end-to-end results. The static
+Talon `EXPLAIN` does not report this new index route.
