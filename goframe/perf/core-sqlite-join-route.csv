@@ -1,0 +1,9 @@
+phase,run,backend,case,mean_us,p50_us,p99_us,max_us
+before,1,talon,filtered_join,7878.25,7656.12,9661.79,9739.88
+before,1,sqlite,filtered_join,1464.25,1455.58,1617.38,1623.04
+after,1,talon,filtered_join,123.83,119.54,208.00,216.46
+after,1,sqlite,filtered_join,1533.68,1446.62,3320.50,3778.58
+after,2,talon,filtered_join,129.01,125.62,162.29,203.04
+after,2,sqlite,filtered_join,1473.32,1458.04,1696.25,1710.25
+after,3,talon,filtered_join,127.39,124.58,180.54,245.08
+after,3,sqlite,filtered_join,1485.42,1463.88,1685.96,1980.21

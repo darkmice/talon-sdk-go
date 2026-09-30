@@ -162,3 +162,35 @@ changes passed 819 SQL unit tests before the probe-count guard; targeted
 transaction, wide-list fallback, and projection regressions passed after it.
 These are local Core measurements, not a new
 signed GoFrame or release-performance result.
+
+## Filtered JOIN route experiment, 2026-09-30
+
+The previous JOIN executor did not recognize a right-table alias such as
+`g.label` as a pushdown candidate. With that ownership fixed, a selective
+filtered INNER JOIN can use the existing index on the left join column to fetch
+matching rows instead of decoding all 10,000 left rows. The indexed route is
+currently limited to non-transactional integer equality joins with at most
+eight filtered right rows, no pagination, and no chain JOIN. The fallback keeps
+the existing scan behavior.
+
+The same release-mode `sql_sqlite_comparison` probe verified equal Talon and
+SQLite results on each run. One pre-change run gave Talon 7,656.12 µs p50 and
+SQLite 1,455.58 µs p50. Three fresh post-change runs gave Talon 119.54,
+125.62, and 124.58 µs p50 (median 124.58 µs), and SQLite 1,446.62, 1,458.04,
+and 1,463.88 µs p50 (median 1,458.04 µs). The observed Talon improvement is
+roughly 60× for this selective JOIN; in the post-change runs it is roughly 12×
+faster than the tested SQLite plan. The raw timings are in
+`perf/core-sqlite-join-route.csv`. Talon's static `EXPLAIN` still reports a full
+scan for this query and should not be used as execution-path evidence.
+
+These numbers are Core-only, literal SQL timings. They do not establish the
+latency through a signed Core artifact, the Go driver, or GoFrame. The `COUNT`,
+`DISTINCT`, and GROUP BY paths remain separate opportunities.
+
+The next count opportunity is structural: multi-row SQL INSERT does not build
+`column_stats`, so this fixture's `COUNT(1)` falls back to `count_prefix` and
+visits every index key. The existing `ColumnStats.count` counts non-NULL numeric
+values, which is not a general table-row count. A constant-time exact `COUNT(*)`
+therefore needs a separate row-count invariant maintained across inserts,
+replacements, deletes, transactions, and reopened engines; using an arbitrary
+column statistic would risk wrong answers.
