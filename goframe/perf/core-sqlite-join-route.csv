@@ -7,3 +7,9 @@ after,2,talon,filtered_join,129.01,125.62,162.29,203.04
 after,2,sqlite,filtered_join,1473.32,1458.04,1696.25,1710.25
 after,3,talon,filtered_join,127.39,124.58,180.54,245.08
 after,3,sqlite,filtered_join,1485.42,1463.88,1685.96,1980.21
+after_plan_refactor,1,talon,filtered_join,143.63,143.46,187.42,189.96
+after_plan_refactor,1,sqlite,filtered_join,1661.72,1535.25,4086.79,9743.12
+after_plan_refactor,2,talon,filtered_join,140.86,142.25,167.58,169.58
+after_plan_refactor,2,sqlite,filtered_join,1560.79,1557.25,1837.25,1838.33
+after_plan_refactor,3,talon,filtered_join,133.68,126.79,160.46,162.12
+after_plan_refactor,3,sqlite,filtered_join,1540.26,1539.12,1737.58,1856.29

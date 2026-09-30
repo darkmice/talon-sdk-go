@@ -183,6 +183,13 @@ faster than the tested SQLite plan. The raw timings are in
 `perf/core-sqlite-join-route.csv`. Talon's static `EXPLAIN` still reports a full
 scan for this query and should not be used as execution-path evidence.
 
+After consolidating the JOIN strategy into one execution-plan enum, three more
+fresh processes gave Talon 143.46, 142.25, and 126.79 µs p50 (median 142.25
+µs), versus SQLite 1,535.25, 1,557.25, and 1,539.12 µs (median 1,539.12 µs).
+This retains a large improvement over the 7,656.12 µs pre-change run. The
+additional samples do not isolate whether the smaller difference between the
+two post-change sets came from code generation or machine variation.
+
 These numbers are Core-only, literal SQL timings. They do not establish the
 latency through a signed Core artifact, the Go driver, or GoFrame. The `COUNT`,
 `DISTINCT`, and GROUP BY paths remain separate opportunities.
