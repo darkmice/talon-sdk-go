@@ -66,3 +66,40 @@ admission follows from this snapshot. The next performance gate should measure
 1, 4, and 8 concurrent callers, a larger dataset, Primary replication, and
 allocation profiles before lifting the one-connection cap or releasing this
 adapter as performance-ready.
+
+## Same-machine SQLite read comparison
+
+On the same Apple M2 Max, a separate Core `e8605c0` probe compared Talon with
+bundled SQLite 3.46.0 through Rust `rusqlite`. Both used identical `CREATE TABLE`,
+`CREATE INDEX`, `INSERT`, and SELECT SQL, with 10,000 items and 100 groups. Each
+query was warmed five times and timed 100 times in each of three fresh process
+runs. Timing includes query parsing/preparation, execution, and full result
+materialization; setup and result equality checks are outside the timer. All six
+queries returned the same values on both engines. Values below are medians of
+the three per-run p50 latencies. The ratio is Talon latency divided by SQLite
+latency, so a number above one means SQLite was faster.
+
+| Query | Result rows | Talon p50 µs | SQLite p50 µs | Ratio |
+| --- | ---: | ---: | ---: | ---: |
+| Indexed primary-key read | 1 | 9.75 | 5.46 | 1.79× |
+| `COUNT(1)` | 1 | 640.67 | 95.00 | 6.74× |
+| `IN (SELECT ...)` | 100 | 1,896.50 | 29.54 | 64.20× |
+| Projected `DISTINCT` | 100 | 2,684.42 | 232.12 | 11.56× |
+| Filtered INNER JOIN | 100 | 7,551.17 | 1,473.62 | 5.12× |
+| GROUP BY/HAVING | 100 | 2,891.25 | 268.29 | 10.78× |
+
+The `EXPLAIN` outputs give a concrete lead for the larger gaps. For the `IN`
+subquery, Talon reports a full scan plus complex filter, whereas SQLite
+searches `items` through `idx_items_group`. For `DISTINCT` and GROUP BY/HAVING,
+Talon reports a full scan and sort while SQLite scans that index as a covering
+index. Talon's `EXPLAIN` is a planner summary, so these descriptions should be
+validated with targeted profiling before assigning exact costs to each step.
+
+This comparison is Core versus SQLite's Rust API, not GoFrame versus a SQLite
+GoFrame driver. SQLite used its default connection settings; the workload is
+warm, single-threaded, read-only, and small enough to fit in memory. It does
+not establish write durability, concurrent throughput, large-data behavior,
+or a general database ranking. DuckDB was not locally available and was not
+measured. Raw timings and plans are in `perf/core-sqlite-e8605c0-run*.csv` and
+`perf/core-sqlite-e8605c0-run*.plans.txt`; the reproducible probe is
+`examples/sql_sqlite_comparison.rs` at talon-core `21ac88b`.

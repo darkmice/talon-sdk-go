@@ -1,0 +1,13 @@
+backend,case,mean_us,p50_us,p99_us,max_us
+talon,indexed_pk,10.11,9.92,12.67,12.88
+sqlite,indexed_pk,5.48,5.46,5.92,6.08
+talon,count_1,680.79,640.67,1153.96,1164.29
+sqlite,count_1,97.36,95.00,135.46,149.29
+talon,in_subquery,1934.44,1896.50,2442.67,2496.46
+sqlite,in_subquery,30.61,29.17,47.79,48.75
+talon,projected_distinct,2685.60,2604.50,3113.21,3157.50
+sqlite,projected_distinct,232.64,228.38,266.83,274.83
+talon,filtered_join,8229.87,7721.54,16020.42,16481.75
+sqlite,filtered_join,1479.71,1473.62,1686.83,1689.79
+talon,group_having,2960.80,2891.25,3796.75,3822.08
+sqlite,group_having,276.67,268.29,318.67,365.33
