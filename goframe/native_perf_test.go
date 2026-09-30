@@ -66,6 +66,16 @@ func BenchmarkLocalSignedCoreGoFrameSQL(b *testing.B) {
 			_, err := db.Model("perf_items").Ctx(ctx).Where("id", 5000).All()
 			return err
 		}},
+		{"count_all", func() error {
+			count, err := db.Model("perf_items").Ctx(ctx).Count()
+			if err != nil {
+				return err
+			}
+			if count != 10_000 {
+				return fmt.Errorf("unexpected row count: %d", count)
+			}
+			return nil
+		}},
 		{"projected_distinct", func() error {
 			_, err := db.Model("perf_items").Ctx(ctx).Fields("group_id").Distinct().Order("group_id").All()
 			return err

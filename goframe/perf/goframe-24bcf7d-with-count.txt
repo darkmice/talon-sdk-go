@@ -1,0 +1,28 @@
+Local ephemeral-test-key fixture: TestLocalSignedCoreKVInterop PASS
+Core commit: 24bcf7d (git_dirty=false)
+Capabilities: native_sql_result=available, native_kv_read=available
+GoFrame native integration: PASS
+Platform: darwin/arm64; benchtime=100x; count=3
+
+case,run,ns_per_op,p50_us,p99_us,bytes_per_op,allocs_per_op
+direct_native_pk,1,48377,45.58,119.5,21392,554
+direct_native_pk,2,44905,43.00,65.29,21396,554
+direct_native_pk,3,52428,46.58,113.1,21397,554
+indexed_pk,1,77580,72.58,146.0,36475,902
+indexed_pk,2,77982,73.33,207.7,36474,902
+indexed_pk,3,75431,71.21,204.2,36088,902
+count_all,1,968229,913.1,1437,21525,542
+count_all,2,973442,906.2,1566,21912,542
+count_all,3,987628,894.1,1758,21530,542
+projected_distinct,1,688472,631.8,1479,456561,9664
+projected_distinct,2,660018,578.6,1043,457243,9664
+projected_distinct,3,686386,606.7,1388,458448,9664
+filtered_join,1,1246510,1181,1974,878250,18845
+filtered_join,2,1290908,1210,2449,874844,18843
+filtered_join,3,1385528,1244,4044,874368,18843
+group_having,1,4303425,4295,5325,832869,18512
+group_having,2,4289790,4223,5262,837423,18514
+group_having,3,4516909,4218,8056,834767,18513
+in_subquery,1,747848,718.0,1043,462453,9836
+in_subquery,2,767900,718.9,1192,461591,9835
+in_subquery,3,751477,717.8,1041,464824,9836

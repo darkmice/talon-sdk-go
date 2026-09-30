@@ -194,13 +194,16 @@ These numbers are Core-only, literal SQL timings. They do not establish the
 latency through a signed Core artifact, the Go driver, or GoFrame. The `COUNT`,
 `DISTINCT`, and GROUP BY paths remain separate opportunities.
 
-The next count opportunity is structural: multi-row SQL INSERT does not build
+At that snapshot, the next count opportunity was structural: multi-row SQL INSERT does not build
 `column_stats`, so this fixture's `COUNT(1)` falls back to `count_prefix` and
 visits every index key. The existing `ColumnStats.count` counts non-NULL numeric
 values, which is not a general table-row count. A constant-time exact `COUNT(*)`
 therefore needs a separate row-count invariant maintained across inserts,
 replacements, deletes, transactions, and reopened engines; using an arbitrary
 column statistic would risk wrong answers.
+
+The later `02ceb59` Core candidate addresses the hot read with an exact
+snapshot-sequence cache; its signed GoFrame result is recorded below.
 
 ## Covering-index DISTINCT experiment, 2026-09-30
 
@@ -252,3 +255,29 @@ end-to-end latencies confirm that the Core query-route gains reach GoFrame.
 Allocation counts remain close to the older snapshot, so reducing native
 result decoding and GoFrame materialization is a separate opportunity. The
 full local benchmark output is in `perf/goframe-24bcf7d-signed.txt`.
+
+## Exact count and indexed GROUP BY through locally signed Core, 2026-10-01
+
+The same SDK fixture rebuilt clean Core commits `24bcf7d` and `02ceb59`,
+verified each self-manifest and an ephemeral test signature, then ran the
+GoFrame integration test and the same release benchmark (`benchtime=100x`,
+`count=3`). The benchmark now includes `Model.Count()` on the 10,000-row table
+and verifies its returned row count. Both Core libraries passed integration.
+Raw measurements, including allocations and p99, are in
+`perf/goframe-24bcf7d-with-count.txt` and
+`perf/goframe-02ceb59-signed.txt`.
+
+| GoFrame model query | `24bcf7d` median p50 | `02ceb59` median p50 | Change | Median allocs/op |
+| --- | ---: | ---: | ---: | ---: |
+| `Model.Count()` | 906.2 µs | 46.0 µs | 19.7× faster | 542 |
+| GROUP BY/HAVING | 4,223 µs | 2,296 µs | 1.84× faster | 18,513 → 18,514 |
+
+The other query shapes remained within their earlier latency bands. The Core
+fixture measures GROUP BY at about 3,002→917 µs, so GoFrame and native result
+materialization still consume a substantial share of the end-to-end request.
+GROUP BY allocations remain near 18.5K per operation. `COUNT(*)` first reads a
+stable snapshot to populate the exact row-count cache; the numbers above
+measure repeated warm queries. A write to any Talon keyspace invalidates that
+cache through the shared storage sequence, so mixed write workloads still
+need a separate performance check. These are local test signatures, not a
+talon-bin release or production artifact.
