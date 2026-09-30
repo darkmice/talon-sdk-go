@@ -576,6 +576,8 @@ remain exact strings. The adapter does not parse SQL to guess columns or add
 A GoFrame transaction uses one native handle for `BEGIN`, statements, and
 `COMMIT` or `ROLLBACK`; closing that handle rolls back a pending transaction.
 Older artifacts fail the capability check before SQL execution.
+The tested GoFrame SQL workload and remaining coverage gaps are recorded in
+[goframe/SQL_COMPATIBILITY.md](goframe/SQL_COMPATIBILITY.md).
 
 GoFrame `gredis` integration is not complete. Talon's current native KV engine
 supports Redis-like string and generic key operations, while GoFrame's
