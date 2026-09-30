@@ -44,6 +44,27 @@ The Core contract needed for the adapter is:
    concurrent writers, reconnect, and restart, plus GoFrame API tests using
    each group and a signed native test artifact.
 
+## Performance admission
+
+Talon's embedded performance is an adapter requirement. Adding command
+coverage alone does not admit `native_goframe_gredis`. Before enabling it,
+benchmark the same pinned Core build through both the Rust engine and the Go
+native ABI, then through representative GoFrame calls. Report throughput,
+p50/p99 latency, allocations per operation, and memory use for hit/miss GET,
+SET, Hash operations, expiry, and mixed read/write loads at 1, 4, and 8
+threads. Include Primary replication and a large-key distribution; keep
+setup, signing, loading, and GoFrame initialization outside the operation
+timers. Record the hardware, build profile, dataset, concurrency, and raw
+runs so regressions can be reproduced.
+
+The experimental Core foundation has a measured extra metadata lookup on
+string GET misses. Its standalone diagnostic is not evidence for Go SDK or
+GoFrame performance, and aggregate throughput on one development machine
+does not clear the latency gate. Set acceptance budgets from representative
+consumer workloads before changing the storage layout or admitting the
+capability. A new native command ABI should preserve binary arguments and
+typed replies without per-command JSON serialization.
+
 The `gdb` driver and its `native_sql_result` v2 protocol are independent of
 this missing `gredis` capability. They must not be advertised as a complete
 Redis adapter.
