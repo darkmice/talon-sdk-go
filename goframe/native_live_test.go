@@ -116,6 +116,21 @@ func TestLocalSignedCoreGoFrameInterop(t *testing.T) {
 			t.Fatalf("model insert item: %v", err)
 		}
 	}
+	if _, err := db.Exec(ctx, "CREATE INDEX gf_sql_items_group ON gf_sql_items (group_id)"); err != nil {
+		t.Fatalf("create group index: %v", err)
+	}
+	if count, err := db.Model("gf_sql_items").Ctx(ctx).Where("group_id", 1).Count(); err != nil || count != 2 {
+		t.Fatalf("indexed equality count=%d, %v", count, err)
+	}
+	if _, err := db.Exec(ctx, "CREATE TABLE gf_sql_batch (id INT PRIMARY KEY, group_id INT, name TEXT, score INT)"); err != nil {
+		t.Fatalf("create batch table: %v", err)
+	}
+	if _, err := db.Model("gf_sql_batch").Ctx(ctx).Insert([]scoredItem{{4, 1, "delta", 40}, {5, 2, "epsilon", 50}}); err != nil {
+		t.Fatalf("model batch insert: %v", err)
+	}
+	if count, err := db.Model("gf_sql_batch").Ctx(ctx).Count(); err != nil || count != 2 {
+		t.Fatalf("model batch insert count=%d, %v", count, err)
+	}
 	page, err := db.Model("gf_sql_items").Ctx(ctx).WhereIn("id", []int{1, 3}).OrderDesc("id").Page(1, 2).All()
 	if err != nil || len(page) != 2 || page[0]["id"].Int() != 3 || page[1]["id"].Int() != 1 {
 		t.Fatalf("model IN/order/page=%v, %v", page, err)
@@ -158,6 +173,16 @@ func TestLocalSignedCoreGoFrameInterop(t *testing.T) {
 	if err != nil || len(joined) != 3 || joined[0]["label"].String() != "one" || joined[2]["label"].String() != "two" {
 		t.Fatalf("model LEFT JOIN=%v, %v", joined, err)
 	}
+	joined, err = db.Model("gf_sql_items", "i").Ctx(ctx).
+		InnerJoin("gf_sql_groups", "g", "i.group_id=g.id").
+		Fields("i.id, g.label").Where("g.label", "one").Order("i.id").All()
+	if err != nil || len(joined) != 2 || joined[0]["id"].Int() != 1 || joined[1]["id"].Int() != 2 {
+		t.Fatalf("model INNER JOIN=%v, %v", joined, err)
+	}
+	if count, err := db.Model("gf_sql_items").Ctx(ctx).
+		Where("group_id IN (SELECT id FROM gf_sql_groups WHERE label = ?)", "one").Count(); err != nil || count != 2 {
+		t.Fatalf("model IN subquery count=%d, %v", count, err)
+	}
 	grouped, err := db.Model("gf_sql_items").Ctx(ctx).
 		Fields("group_id, COUNT(*) AS n").Group("group_id").Having("COUNT(*) > ?", 1).
 		Order("group_id").All()
@@ -179,6 +204,16 @@ func TestLocalSignedCoreGoFrameInterop(t *testing.T) {
 	max, err := db.Model("gf_sql_items").Ctx(ctx).Max("score")
 	if err != nil || max != 30 {
 		t.Fatalf("model MAX=%v, %v", max, err)
+	}
+	if _, err := db.Exec(ctx, "CREATE TABLE gf_sql_money (id INT PRIMARY KEY, amount DECIMAL(18,2))"); err != nil {
+		t.Fatalf("create decimal table: %v", err)
+	}
+	if _, err := db.Exec(ctx, "INSERT INTO gf_sql_money (id, amount) VALUES (?, ?)", 1, "1234567890123456.78"); err != nil {
+		t.Fatalf("insert exact decimal: %v", err)
+	}
+	money, err := db.Model("gf_sql_money").Ctx(ctx).Where("id", 1).One()
+	if err != nil || money["amount"].String() != "1234567890123456.78" {
+		t.Fatalf("exact decimal=%v, %v", money, err)
 	}
 	if result, err := db.Model("gf_sql_items").Ctx(ctx).InsertIgnore(scoredItem{1, 1, "changed", 99}); err != nil {
 		t.Fatalf("model InsertIgnore: %v", err)
