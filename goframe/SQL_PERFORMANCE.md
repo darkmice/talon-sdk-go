@@ -228,3 +228,27 @@ median was 878.92 µs. The raw measurements are in
 reproducible with `sql_sqlite_comparison 10000 100 distinct_cardinality`.
 These are Core-only results, not signed GoFrame end-to-end results. The static
 Talon `EXPLAIN` does not report this new index route.
+
+## Local signed Core through GoFrame, 2026-09-30
+
+Core `24bcf7d` was rebuilt from a clean worktree. Its self-manifest reported
+`git_dirty=false` and the available `native_sql_result` and `native_kv_read`
+capabilities. The SDK's opt-in fixture signed the library with an ephemeral
+test key, verified it through the normal bundle policy, passed the native KV
+and GoFrame SQL integration tests, and ran the GoFrame benchmark three times.
+This is local test-artifact evidence, not a talon-bin release signature.
+
+| GoFrame query | p50 µs, three runs | Median B/op | Median allocs/op |
+| --- | ---: | ---: | ---: |
+| Model primary-key read | 70.54–76.33 | 36,097 | 902 |
+| Projected `DISTINCT` | 607.2–623.6 | 457,312 | 9,664 |
+| Filtered INNER JOIN | 1,246–1,296 | 874,004 | 18,843 |
+| GROUP BY/HAVING | 3,984–4,103 | 835,130 | 18,513 |
+| Parameterized `IN (SELECT ...)` | 688.2–711.3 | 462,135 | 9,835 |
+
+The prior signed Core snapshot had 3,491–3,606 µs for `DISTINCT`, 9,580–9,681
+µs for this JOIN, and 2,767–2,798 µs for the `IN` subquery. These lower
+end-to-end latencies confirm that the Core query-route gains reach GoFrame.
+Allocation counts remain close to the older snapshot, so reducing native
+result decoding and GoFrame materialization is a separate opportunity. The
+full local benchmark output is in `perf/goframe-24bcf7d-signed.txt`.
