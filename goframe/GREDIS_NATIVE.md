@@ -24,6 +24,14 @@ are additional requirements.
 The native read subset covers only five commands; it cannot satisfy any group
 interface in full.
 
+The Core Draft branch also has an internal, feature-gated List foundation:
+LPUSH, LPUSHX, RPUSH, RPUSHX, LPOP, RPOP, LLEN, LINDEX, and LRANGE. It shares
+typed key ownership and expiry with Hash, uses generation-scoped ordered item
+keys, and has an explicit bounded stale-item reclaimer. These methods are Rust
+internals only. No native command ABI or Go `gredis.Adapter` calls them, and
+the reclaim sweep has no runtime scheduler. This does not complete GoFrame's
+17 List methods or change the gated capability status.
+
 The Core contract needed for the adapter is:
 
 1. A single typed key namespace with atomic type checks, Redis-compatible
