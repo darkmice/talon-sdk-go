@@ -9,7 +9,7 @@ import (
 
 // defaultNativePolicy keeps an explicit environment policy authoritative. A
 // partial TALON_NATIVE_* policy fails closed instead of silently using the
-// bundled module. The bundled module itself is gated until a signed release.
+// bundled module. The pinned module carries a signed native release.
 func defaultNativePolicy() (NativePolicy, error) {
 	for _, item := range os.Environ() {
 		name, _, _ := strings.Cut(item, "=")

@@ -3,7 +3,7 @@ module github.com/darkmice/talon-sdk-go
 go 1.21
 
 require (
-	github.com/darkmice/talon-bin/go-runtime v0.0.0-20261001140436-9a56bfa23a98
+	github.com/darkmice/talon-bin/go-runtime v0.1.54
 	github.com/gogf/gf/v2 v2.8.3
 )
 
