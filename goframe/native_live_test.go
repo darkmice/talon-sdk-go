@@ -3,9 +3,12 @@ package goframe
 import (
 	"context"
 	"errors"
+	"math/big"
 	"os"
+	"strings"
 	"testing"
 
+	talon "github.com/darkmice/talon-sdk-go"
 	"github.com/gogf/gf/v2/database/gdb"
 )
 
@@ -244,5 +247,90 @@ func TestLocalSignedCoreGoFrameInterop(t *testing.T) {
 	}
 	if count, err := db.Model("gf_sql_items").Ctx(ctx).Where("id", 4).Count(); err != nil || count != 1 {
 		t.Fatalf("committed row count=%d, %v", count, err)
+	}
+	verifyAdvancedSQLShapes(t, ctx, db)
+}
+
+func verifyAdvancedSQLShapes(t *testing.T, ctx context.Context, db gdb.DB) {
+	t.Helper()
+	for _, statement := range []string{
+		"CREATE TABLE gf_advanced_roles (role_id TEXT NOT NULL, capability TEXT NOT NULL, PRIMARY KEY (role_id, capability))",
+		"CREATE INDEX gf_advanced_roles_role ON gf_advanced_roles(role_id)",
+		"CREATE UNIQUE INDEX gf_advanced_roles_capability ON gf_advanced_roles(capability)",
+		"INSERT INTO gf_advanced_roles VALUES ('r1', 'read'), ('r2', 'write')",
+		"CREATE TABLE IF NOT EXISTS gf_advanced_roles (role_id TEXT, capability TEXT)",
+	} {
+		if _, err := db.Exec(ctx, statement); err != nil {
+			t.Fatalf("advanced DDL/write %q: %v", statement, err)
+		}
+	}
+	for _, statement := range []string{
+		"INSERT INTO gf_advanced_roles VALUES ('r1', 'read')",
+		"INSERT INTO gf_advanced_roles VALUES (NULL, 'admin')",
+		"INSERT INTO gf_advanced_roles VALUES ('r3', 'read')",
+	} {
+		if _, err := db.Exec(ctx, statement); err == nil {
+			t.Fatalf("constraint violation %q succeeded", statement)
+		}
+	}
+	rows, err := db.GetAll(ctx, "SELECT capability FROM gf_advanced_roles WHERE role_id IN (?, ?) ORDER BY capability", "r1", "r2")
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("indexed IN rows=%v, error=%v", rows, err)
+	}
+	plan, err := db.GetAll(ctx, "EXPLAIN SELECT capability FROM gf_advanced_roles WHERE role_id IN ('r1','r2')")
+	if err != nil {
+		t.Fatalf("indexed IN plan: %v", err)
+	}
+	indexed := false
+	for _, row := range plan {
+		for _, cell := range row {
+			indexed = indexed || strings.Contains(cell.String(), "Indexed IN probes")
+		}
+	}
+	if !indexed {
+		t.Fatalf("IN plan omitted index probes: %v", plan)
+	}
+
+	for _, statement := range []string{
+		"CREATE TABLE gf_advanced_parent (id INTEGER PRIMARY KEY)",
+		"CREATE TABLE gf_advanced_child (id INTEGER PRIMARY KEY, parent_id INTEGER, FOREIGN KEY (parent_id) REFERENCES gf_advanced_parent(id))",
+		"CREATE TABLE gf_advanced_types (id INTEGER PRIMARY KEY, ts TIMESTAMP, enabled BOOLEAN, name VARCHAR(32), big BIGINT)",
+		"CREATE TABLE gf_advanced_alter (id INTEGER PRIMARY KEY, name TEXT)",
+		"ALTER TABLE gf_advanced_alter ADD COLUMN note TEXT",
+		"ALTER TABLE gf_advanced_alter ALTER COLUMN note TYPE VARCHAR(64)",
+		"ALTER TABLE gf_advanced_alter ADD CONSTRAINT uq_gf_note UNIQUE(note)",
+		"ALTER TABLE gf_advanced_alter DROP COLUMN name",
+	} {
+		if _, err := db.Exec(ctx, statement); err != nil {
+			t.Fatalf("advanced DDL %q: %v", statement, err)
+		}
+	}
+	if _, err := db.Exec(ctx, "INSERT INTO gf_advanced_child VALUES (1, 99)"); err == nil {
+		t.Fatal("foreign key accepted an absent parent")
+	}
+	for _, statement := range []string{
+		"SELECT r.role_id FROM gf_advanced_roles r JOIN gf_advanced_roles b ON r.role_id=b.role_id JOIN gf_advanced_roles c ON b.role_id=c.role_id",
+		"SELECT role_id FROM gf_advanced_roles WHERE EXISTS (SELECT 1 FROM gf_advanced_roles WHERE capability='read')",
+		"SELECT role_id FROM gf_advanced_roles UNION SELECT role_id FROM gf_advanced_roles",
+		"WITH picked AS (SELECT role_id FROM gf_advanced_roles) SELECT role_id FROM picked",
+		"SELECT role_id, ROW_NUMBER() OVER (ORDER BY role_id) FROM gf_advanced_roles",
+	} {
+		if _, err := db.GetAll(ctx, statement); err != nil {
+			t.Fatalf("advanced query %q: %v", statement, err)
+		}
+	}
+	if _, err := db.Exec(ctx, "CREATE INDEX gf_sql_money_amount ON gf_sql_money(amount)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, "INSERT INTO gf_sql_money (id, amount) VALUES (2, '2.00'), (3, '999.99')"); err != nil {
+		t.Fatalf("insert comparison values: %v", err)
+	}
+	threshold, err := talon.DecimalValue(big.NewInt(1000), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	amounts, err := db.GetAll(ctx, "SELECT amount FROM gf_sql_money WHERE amount > ? ORDER BY amount", threshold)
+	if err != nil || len(amounts) != 2 || amounts[0]["amount"].String() != "999.99" || amounts[1]["amount"].String() != "1234567890123456.78" {
+		t.Fatalf("decimal comparison/order=%v, %v", amounts, err)
 	}
 }

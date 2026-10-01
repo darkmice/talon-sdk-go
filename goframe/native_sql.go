@@ -101,18 +101,10 @@ func (c *nativeConn) QueryContext(ctx context.Context, statement string, args []
 	if err != nil {
 		return nil, err
 	}
-	result := &nativeRows{columns: resultSet.Columns, values: make([][]driver.Value, len(resultSet.Rows))}
-	for i, row := range resultSet.Rows {
+	result := &nativeRows{columns: resultSet.Columns, values: resultSet.Rows}
+	for _, row := range resultSet.Rows {
 		if len(row) != len(resultSet.Columns) {
 			return nil, fmt.Errorf("talon: native row width %d does not match %d columns", len(row), len(resultSet.Columns))
-		}
-		result.values[i] = make([]driver.Value, len(row))
-		for j, value := range row {
-			converted, err := sqlValue(value)
-			if err != nil {
-				return nil, fmt.Errorf("talon: row %d column %d: %w", i, j, err)
-			}
-			result.values[i][j] = converted
 		}
 	}
 	return result, nil
@@ -299,17 +291,23 @@ func convertParam(input interface{}) (talon.Value, error) {
 
 type nativeRows struct {
 	columns []string
-	values  [][]driver.Value
+	values  []talon.Row
 	next    int
 }
 
 func (r *nativeRows) Columns() []string { return append([]string(nil), r.columns...) }
-func (*nativeRows) Close() error        { return nil }
+func (r *nativeRows) Close() error      { r.values = nil; return nil }
 func (r *nativeRows) Next(dest []driver.Value) error {
 	if r.next >= len(r.values) {
 		return io.EOF
 	}
-	copy(dest, r.values[r.next])
+	for column, value := range r.values[r.next] {
+		converted, err := sqlValue(value)
+		if err != nil {
+			return fmt.Errorf("talon: row %d column %d: %w", r.next, column, err)
+		}
+		dest[column] = converted
+	}
 	r.next++
 	return nil
 }
