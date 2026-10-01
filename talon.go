@@ -43,11 +43,10 @@ var (
 	loadedNative *verifiedNative
 )
 
-// Open opens a database using the fail-closed native policy from environment.
-// Missing or incomplete trust configuration is an error; there is no unsigned
-// library fallback.
+// Open opens a database using an explicit native environment policy or the
+// release-pinned signed Go runtime module. Neither path accepts unsigned code.
 func Open(path string) (*DB, error) {
-	policy, err := NativePolicyFromEnvironment()
+	policy, err := defaultNativePolicy()
 	if err != nil {
 		return nil, newError(CodeNativeVerification, "open", "native trust policy is incomplete", err)
 	}

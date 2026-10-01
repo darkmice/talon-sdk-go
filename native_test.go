@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	nativecore "github.com/darkmice/talon-bin/go-runtime"
 )
 
 type testNativeBundle struct {
@@ -77,6 +79,10 @@ func TestNativePlatformContractCoversEveryEnterpriseTarget(t *testing.T) {
 }
 
 func makeTestNativeBundle(root string) (testNativeBundle, error) {
+	return makeTestNativeBundleProfile(root, false)
+}
+
+func makeTestNativeBundleProfile(root string, runtimeOnly bool) (testNativeBundle, error) {
 	if root == "" {
 		var err error
 		root, err = os.MkdirTemp("", "talon-sdk-native-test-")
@@ -96,7 +102,11 @@ func makeTestNativeBundle(root string) (testNativeBundle, error) {
 	}
 	files["NOTICE"] = []byte("test-only Talon native bundle\n")
 
-	archiveName := "libtalon-core-" + platform.Name + ".tar.gz"
+	prefix := "libtalon-core"
+	if runtimeOnly {
+		prefix = "libtalon-core-runtime"
+	}
+	archiveName := prefix + "-" + platform.Name + ".tar.gz"
 	archivePath := filepath.Join(root, archiveName)
 	archiveFile, err := os.Create(archivePath)
 	if err != nil {
@@ -105,6 +115,9 @@ func makeTestNativeBundle(root string) (testNativeBundle, error) {
 	gzipWriter := gzip.NewWriter(archiveFile)
 	tarWriter := tar.NewWriter(gzipWriter)
 	names := []string{platform.StaticLibrary, platform.DynamicLibrary, "talon.h", "LICENSE.core", "NOTICE"}
+	if runtimeOnly {
+		names = names[1:]
+	}
 	for _, name := range names {
 		value := files[name]
 		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o500, Size: int64(len(value)), Typeflag: tar.TypeReg}); err != nil {
@@ -125,8 +138,8 @@ func makeTestNativeBundle(root string) (testNativeBundle, error) {
 	}
 
 	outerFiles := map[string][]byte{
-		"libtalon-core-" + platform.Name + ".sbom.cdx.json": []byte(`{"bomFormat":"CycloneDX"}` + "\n"),
-		"libtalon-core-" + platform.Name + ".licenses.json": []byte(`{"schema_version":"1.0","packages":[]}` + "\n"),
+		prefix + "-" + platform.Name + ".sbom.cdx.json": []byte(`{"bomFormat":"CycloneDX"}` + "\n"),
+		prefix + "-" + platform.Name + ".licenses.json": []byte(`{"schema_version":"1.0","packages":[]}` + "\n"),
 		"LICENSE.core": files["LICENSE.core"],
 		"NOTICE":       files["NOTICE"],
 	}
@@ -156,15 +169,21 @@ func makeTestNativeBundle(root string) (testNativeBundle, error) {
 	if err != nil {
 		return testNativeBundle{}, err
 	}
-	manifestName := "libtalon-core-" + platform.Name + ".manifest.json"
+	manifestName := prefix + "-" + platform.Name + ".manifest.json"
+	fileRecords := []fileRecord{record(platform.DynamicLibrary, files[platform.DynamicLibrary]), record("talon.h", files["talon.h"]), record("LICENSE.core", files["LICENSE.core"]), record("NOTICE", files["NOTICE"])}
+	artifactKind := "talon-core-native-runtime"
+	if !runtimeOnly {
+		fileRecords = append([]fileRecord{record(platform.StaticLibrary, files[platform.StaticLibrary])}, fileRecords...)
+		artifactKind = "talon-core-native-library"
+	}
 	manifest := nativeManifest{
 		SchemaVersion: "1.0",
 		Release:       nativeRelease{Tag: "v1.2.3", Channel: nativeReleaseChannel, TalonBinCommit: "1111111111111111111111111111111111111111"},
 		Source:        nativeSource{Repository: "https://github.com/darkmice/talon-core", Tag: "v0.1.1", Commit: "18b96399610a9f8c2498d57f3a8ddcd44c2f57a0", CargoVersion: "0.1.1", CargoLockSHA256: "2222222222222222222222222222222222222222222222222222222222222222", SourceDateEpoch: 1, Clean: true},
 		ABI:           nativeABI{Profile: "talon-native-c", Version: 1, HeaderSHA256: headerFingerprint, RequiredSymbols: append([]string(nil), sdkRequiredSymbols...)},
 		Build:         nativeBuild{Source: "test", WorkflowRunID: "test-run", Runner: platform.Runner, Target: platform.Target, Rustc: "rustc 1.92.0", Cargo: "cargo 1.92.0", Command: []string{"build", "--locked", "--release", "--lib"}, Reproducibility: "test-only exact bytes"},
-		Artifact:      nativeArtifact{Kind: "talon-core-native-library", Platform: platform.Name, Archive: record(archiveName, archiveBytes), Files: []fileRecord{record(platform.StaticLibrary, files[platform.StaticLibrary]), record(platform.DynamicLibrary, files[platform.DynamicLibrary]), record("talon.h", files["talon.h"]), record("LICENSE.core", files["LICENSE.core"]), record("NOTICE", files["NOTICE"])}},
-		Materials:     nativeMaterials{SBOM: record("libtalon-core-"+platform.Name+".sbom.cdx.json", outerFiles["libtalon-core-"+platform.Name+".sbom.cdx.json"]), LicenseInventory: record("libtalon-core-"+platform.Name+".licenses.json", outerFiles["libtalon-core-"+platform.Name+".licenses.json"]), CoreLicense: record("LICENSE.core", outerFiles["LICENSE.core"]), Notice: record("NOTICE", outerFiles["NOTICE"])},
+		Artifact:      nativeArtifact{Kind: artifactKind, Platform: platform.Name, Archive: record(archiveName, archiveBytes), Files: fileRecords},
+		Materials:     nativeMaterials{SBOM: record(prefix+"-"+platform.Name+".sbom.cdx.json", outerFiles[prefix+"-"+platform.Name+".sbom.cdx.json"]), LicenseInventory: record(prefix+"-"+platform.Name+".licenses.json", outerFiles[prefix+"-"+platform.Name+".licenses.json"]), CoreLicense: record("LICENSE.core", outerFiles["LICENSE.core"]), Notice: record("NOTICE", outerFiles["NOTICE"])},
 		Signing:       nativeSigning{Algorithm: "Ed25519", KeyID: "test-release-key", PublicKeySHA256: keyFingerprint, Signature: manifestName + ".sig"},
 		Compatibility: nativeCompatibility{SDKContract: nativeManifestContract, RuntimeVerification: "ed25519-manifest+sha256-native+abi-identity", BinarySelfAttestation: true},
 		Gates:         nativeGates{StorageConditionalBatchV1: CapabilityGate{Status: "gated", Reason: "test fixture mirrors the current Core ABI gate"}},
@@ -184,13 +203,66 @@ func makeTestNativeBundle(root string) (testNativeBundle, error) {
 	publicPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER})
 	return testNativeBundle{
 		policy: NativePolicy{
-			BundleDir: root, PublicKeyPEM: publicPEM, ExpectedKeyID: "test-release-key", ExpectedKeySHA256: keyFingerprint,
+			BundleDir: root, RuntimeOnly: runtimeOnly, PublicKeyPEM: publicPEM, ExpectedKeyID: "test-release-key", ExpectedKeySHA256: keyFingerprint,
 			ExpectedReleaseTag: "v1.2.3", ExpectedTalonBinCommit: "1111111111111111111111111111111111111111",
 			ExpectedCoreRepository: "https://github.com/darkmice/talon-core", ExpectedCoreTag: "v0.1.1", ExpectedCoreCommit: "18b96399610a9f8c2498d57f3a8ddcd44c2f57a0", ExpectedCoreVersion: "0.1.1",
 			ExpectedABIProfile: "talon-native-c", ExpectedABIVersion: 1, ExpectedHeaderSHA256: headerFingerprint,
 		},
 		privateKey: privateKey, manifestPath: manifestPath, signaturePath: signaturePath,
 	}, nil
+}
+
+func TestRuntimeOnlyBundleVerifiesWithoutStaticLibrary(t *testing.T) {
+	bundle, err := makeTestNativeBundleProfile(t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := verifyNativeBundle(bundle.policy)
+	if err != nil {
+		t.Fatalf("verify runtime-only bundle: %v", err)
+	}
+	t.Cleanup(func() { _ = removeVerifiedNative(verified) })
+	if verified.Manifest.Artifact.Kind != "talon-core-native-runtime" {
+		t.Fatalf("artifact kind = %q", verified.Manifest.Artifact.Kind)
+	}
+	platform, err := currentNativePlatform()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range verified.Manifest.Artifact.Files {
+		if record.Path == platform.StaticLibrary {
+			t.Fatal("runtime-only bundle contains static library")
+		}
+	}
+	bundle.policy.RuntimeOnly = false
+	if _, err := verifyNativeBundle(bundle.policy); err == nil {
+		t.Fatal("runtime bundle accepted as full native bundle")
+	}
+}
+
+func TestGoRuntimeIdentityMapsToVerifiedNativePolicy(t *testing.T) {
+	bundle, err := makeTestNativeBundleProfile(t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := bundle.policy
+	identity := nativecore.Identity{
+		Status: "ready", ReleaseTag: p.ExpectedReleaseTag, TalonBinCommit: p.ExpectedTalonBinCommit,
+		CoreRepository: p.ExpectedCoreRepository, CoreTag: p.ExpectedCoreTag,
+		CoreCommit: p.ExpectedCoreCommit, CoreVersion: p.ExpectedCoreVersion,
+		ABIProfile: p.ExpectedABIProfile, ABIVersion: p.ExpectedABIVersion,
+		HeaderSHA256: p.ExpectedHeaderSHA256, KeyID: p.ExpectedKeyID,
+		KeySHA256: p.ExpectedKeySHA256, PublicKeyPEM: string(p.PublicKeyPEM),
+	}
+	policy := nativePolicyFromGoRuntime(p.BundleDir, identity)
+	if !policy.RuntimeOnly {
+		t.Fatal("Go runtime policy must require runtime-only signed artifact")
+	}
+	verified, err := verifyNativeBundle(policy)
+	if err != nil {
+		t.Fatalf("module identity did not verify signed runtime bundle: %v", err)
+	}
+	t.Cleanup(func() { _ = removeVerifiedNative(verified) })
 }
 
 func TestOpenFailsClosedWithoutNativePolicy(t *testing.T) {

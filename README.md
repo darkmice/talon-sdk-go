@@ -179,8 +179,16 @@ platforms fail closed before bundle access.
 
 ## Open
 
-Applications may pass a `NativePolicy` directly with `OpenWithOptions`, or use
-`Open`, which reads the following required environment variables:
+Applications may pass a `NativePolicy` directly with `OpenWithOptions`.
+`Open` first checks whether any `TALON_NATIVE_*` environment variable is set;
+if so, it reads the complete explicit policy below and fails on a partial one.
+Otherwise it selects the version-pinned `talon-bin/go-runtime` module. That
+module is currently **gated** because the production signing identity and
+four-platform signed release are not available. Importing the SDK does not yet
+make the embedded database usable without a separately verified native bundle.
+The SDK does not fetch `talon-bin/latest` during `go get`, build, or `Open`.
+
+For an explicit native policy, set:
 
 ```text
 TALON_NATIVE_BUNDLE_DIR
@@ -197,6 +205,13 @@ TALON_NATIVE_EXPECTED_ABI_PROFILE
 TALON_NATIVE_EXPECTED_ABI_VERSION
 TALON_NATIVE_EXPECTED_HEADER_SHA256
 ```
+
+`TALON_NATIVE_ARTIFACT_PROFILE=runtime` selects the separately signed
+dynamic-library-only archive. Omit it (or set `full`) for the original signed
+archive containing both static and dynamic libraries. A future released Go
+runtime module will embed only the current platform's signed runtime archive
+and trusted release identity; `Open` will still verify its manifest, members,
+signature, and loaded Core self-manifest before use.
 
 `TALON_NATIVE_REQUIRED_CAPABILITIES` is an optional comma-separated list. A
 required signed feature that is gated, or not implemented by this SDK version,
