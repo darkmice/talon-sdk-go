@@ -93,68 +93,129 @@ func validateJSONNumbers(value interface{}) error {
 }
 
 func rejectDuplicateJSONKeys(data []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	var visit func(int) error
-	visit = func(depth int) error {
-		if depth > 128 {
-			return fmt.Errorf("JSON nesting exceeds 128 levels")
+	// decodeStrictJSON already rejected invalid UTF-8. Validate syntax once,
+	// then scan only object keys. Decoder.Token boxes every scalar in large
+	// result sets and allocates for every nested cell.
+	if !json.Valid(data) {
+		return fmt.Errorf("invalid JSON")
+	}
+	scanner := duplicateKeyScanner{data: data}
+	if err := scanner.visit(0); err != nil {
+		return err
+	}
+	scanner.skipSpace()
+	if scanner.offset != len(data) {
+		return fmt.Errorf("trailing JSON value")
+	}
+	return nil
+}
+
+type duplicateKeyScanner struct {
+	data   []byte
+	offset int
+}
+
+func (scanner *duplicateKeyScanner) skipSpace() {
+	for scanner.offset < len(scanner.data) {
+		switch scanner.data[scanner.offset] {
+		case ' ', '\n', '\r', '\t':
+			scanner.offset++
+		default:
+			return
 		}
-		token, err := decoder.Token()
-		if err != nil {
-			return err
+	}
+}
+
+// skipString assumes json.Valid has already checked escapes and termination.
+func (scanner *duplicateKeyScanner) skipString() (start, end int, escaped bool) {
+	start = scanner.offset
+	scanner.offset++ // opening quote
+	for scanner.offset < len(scanner.data) {
+		ch := scanner.data[scanner.offset]
+		scanner.offset++
+		if ch == '\\' {
+			escaped = true
+			scanner.offset++ // escaped byte; json.Valid checked the sequence
+		} else if ch == '"' {
+			return start, scanner.offset, escaped
 		}
-		delim, ok := token.(json.Delim)
-		if !ok {
+	}
+	return start, scanner.offset, escaped
+}
+
+func (scanner *duplicateKeyScanner) visit(depth int) error {
+	if depth > 128 {
+		return fmt.Errorf("JSON nesting exceeds 128 levels")
+	}
+	scanner.skipSpace()
+	switch scanner.data[scanner.offset] {
+	case '{':
+		scanner.offset++
+		scanner.skipSpace()
+		if scanner.data[scanner.offset] == '}' {
+			scanner.offset++
 			return nil
 		}
-		switch delim {
-		case '{':
-			seen := map[string]struct{}{}
-			for decoder.More() {
-				keyToken, err := decoder.Token()
-				if err != nil {
+		seen := make(map[string]struct{})
+		for {
+			start, end, escaped := scanner.skipString()
+			var key string
+			if escaped {
+				// JSON escapes (including surrogate pairs) must be
+				// normalized before comparing keys.
+				if err := json.Unmarshal(scanner.data[start:end], &key); err != nil {
 					return err
 				}
-				key, ok := keyToken.(string)
-				if !ok {
-					return fmt.Errorf("object key is not a string")
-				}
-				if _, duplicate := seen[key]; duplicate {
-					return fmt.Errorf("duplicate JSON key %q", key)
-				}
-				seen[key] = struct{}{}
-				if err := visit(depth + 1); err != nil {
-					return err
-				}
+			} else {
+				key = string(scanner.data[start+1 : end-1])
 			}
-			end, err := decoder.Token()
-			if err != nil || end != json.Delim('}') {
-				return fmt.Errorf("unterminated JSON object")
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("duplicate JSON key %q", key)
 			}
-		case '[':
-			for decoder.More() {
-				if err := visit(depth + 1); err != nil {
-					return err
-				}
+			seen[key] = struct{}{}
+			scanner.skipSpace()
+			scanner.offset++ // colon
+			if err := scanner.visit(depth + 1); err != nil {
+				return err
 			}
-			end, err := decoder.Token()
-			if err != nil || end != json.Delim(']') {
-				return fmt.Errorf("unterminated JSON array")
+			scanner.skipSpace()
+			if scanner.data[scanner.offset] == '}' {
+				scanner.offset++
+				return nil
 			}
-		default:
-			return fmt.Errorf("unexpected JSON delimiter %q", delim)
+			scanner.offset++ // comma
+			scanner.skipSpace()
 		}
-		return nil
-	}
-	if err := visit(0); err != nil {
-		return err
-	}
-	if token, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return fmt.Errorf("trailing JSON token %v", token)
+	case '[':
+		scanner.offset++
+		scanner.skipSpace()
+		if scanner.data[scanner.offset] == ']' {
+			scanner.offset++
+			return nil
 		}
-		return err
+		for {
+			if err := scanner.visit(depth + 1); err != nil {
+				return err
+			}
+			scanner.skipSpace()
+			if scanner.data[scanner.offset] == ']' {
+				scanner.offset++
+				return nil
+			}
+			scanner.offset++ // comma
+		}
+	case '"':
+		scanner.skipString()
+	default:
+		// The syntax pass has established the primitive boundary.
+		for scanner.offset < len(scanner.data) {
+			switch scanner.data[scanner.offset] {
+			case ' ', '\n', '\r', '\t', ',', '}', ']':
+				return nil
+			default:
+				scanner.offset++
+			}
+		}
 	}
 	return nil
 }

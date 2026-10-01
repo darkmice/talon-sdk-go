@@ -305,3 +305,25 @@ method are in `perf/goframe-02ceb59-sdk-decode-before-after.txt`.
 Go's `-memprofile` flag ended with `signal: killed` even on a `goframe` test
 running no benchmarks, so no pprof profile was available. The p50 difference
 is a small local sample; concurrency and large results remain unmeasured.
+
+## Strict JSON duplicate-key scan, 2026-10-01
+
+After the SDK result decoder change above, the remaining duplicate-key scan
+used `json.Decoder.Token()` for every scalar. The shared strict JSON path now
+validates syntax with `json.Valid`, then scans object keys without allocating
+boxed scalar tokens. Escaped keys still use `encoding/json` normalization
+before comparison. A fixed-seed 3,000-case differential test and boundary
+cases match the previous scanner's acceptance, duplicate-key classification,
+and 128-level depth limit; all Go package tests pass.
+
+On the same locally signed Core `02ceb59`, GoFrame GROUP BY changed from
+10,423–10,424 to 4,681–4,683 allocations per operation, and median bytes
+from 387,075 to 287,588. Median p50 changed from 1,714 to 1,666 µs across
+three 20-call repetitions. The latency difference is modest; the stable
+allocation reduction is the main result. The isolated duplicate-key scan
+changed from 3,271 to 410 allocations for the 100-row payload. The outer
+native response and inner SQL result are each checked, explaining why the
+end-to-end reduction is close to twice the isolated reduction. A small JSON
+response also improved from 43 to 6 scanner allocations. Raw measurements
+are in `perf/goframe-02ceb59-duplicate-scan-before-after.txt`. This is local
+single-caller evidence, not a released talon-bin performance result.

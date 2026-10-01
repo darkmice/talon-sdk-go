@@ -1,0 +1,39 @@
+Native JSON duplicate-key scanner comparison, 2026-10-01
+
+Core artifact: clean self-attested 02ceb599a6fb092d3403e88114153c936f070c7b
+release libtalon.dylib, signed with an ephemeral SDK test key. GoFrame fixture:
+10,000 items, 100 groups. Same Core binary and SQL on both sides. Go 1.22.0,
+macOS arm64. Each GoFrame case has 20 timed calls after warmup, three repeats.
+The previous SDK result is commit 6ffa121; the new result changes only the
+Go duplicate-key scanner and adds benchmarks and tests.
+
+GoFrame previous SDK:
+direct_native_group_having p50-us=1922,1701,1605 B/op=344847,344868,344806 allocs/op=10051,10051,10051
+group_having               p50-us=1734,1676,1714 B/op=387075,387203,385203 allocs/op=10423,10424,10423
+
+GoFrame new scanner:
+direct_native_group_having p50-us=1664,1489,1703 B/op=247458,247450,247701 allocs/op=4309,4309,4311
+group_having               p50-us=1666,1647,1667 B/op=287569,287588,291366 allocs/op=4681,4681,4683
+
+Isolated 100-row/two-integer-column payload, 100 calls x three repeats:
+duplicate-key scan before:  ns/op=117246,114495,117572 B/op=53330,53328,53328 allocs/op=3271,3271,3271
+duplicate-key scan after:   ns/op=38245,35306,31220 B/op=4962,4963,4962 allocs/op=410,410,410
+decodeSQLResult before:     ns/op=324670,327745,320719 B/op=266812,266705,266705 allocs/op=6393,6393,6393
+decodeSQLResult after:      ns/op=228747,225930,239906 B/op=218485,218445,218444 allocs/op=3532,3532,3532
+
+Small response duplicate-key scan, 10,000 calls x three repeats in one binary:
+legacy token scanner: ns/op=1686,1677,1628 B/op=1512,1512,1512 allocs/op=43,43,43
+validated-byte scanner: ns/op=280.0,274.2,270.8 B/op=64,64,64 allocs/op=6,6,6
+
+The full GoFrame allocation reduction is 5,742 per operation, close to twice
+the isolated scan reduction of 2,861. QueryResult decodes both the outer
+native response and the SQL result payload with strict JSON checking. The
+scanner first validates JSON syntax, then traverses keys without boxing scalar
+tokens. Escaped keys are normalized with encoding/json before comparison.
+
+All Go packages passed tests with external linking, including a 3,000-case
+fixed-seed differential check against the previous token scanner and signed
+Core GoFrame integration. The p50 reduction is modest and could include
+machine variation; allocations are stable across repeats. The attempted
+Go -memprofile remains unavailable because even an empty benchmark process
+was killed. These are local single-caller results, not a released talon-bin.

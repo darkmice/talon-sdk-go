@@ -38,4 +38,18 @@ func BenchmarkNativeSQLResultDecode(b *testing.B) {
 			}
 		}
 	})
+	for name, cell := range map[string]json.RawMessage{
+		"integer_cell": json.RawMessage(`{"Integer":12345}`),
+		"text_cell":    json.RawMessage(`{"Text":"sample"}`),
+		"json_cell":    json.RawMessage(`{"Jsonb":{"x":1}}`),
+	} {
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := decodeCellValidated(cell); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }
