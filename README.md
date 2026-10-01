@@ -179,8 +179,18 @@ platforms fail closed before bundle access.
 
 ## Open
 
-Applications may pass a `NativePolicy` directly with `OpenWithOptions`, or use
-`Open`, which reads the following required environment variables:
+Applications may pass a `NativePolicy` directly with `OpenWithOptions`.
+`Open` first checks whether any `TALON_NATIVE_*` environment variable is set;
+if so, it reads the complete explicit policy below and fails on a partial one.
+Otherwise it selects the version-pinned `talon-bin/go-runtime` module. That
+module is pinned to the signed `v0.1.54` release and embeds the native runtime
+for `darwin/amd64`, `darwin/arm64`, `linux/amd64`, and `linux/arm64`. `go get`
+resolves that fixed module version; `Open` verifies and loads its signed runtime
+without downloading a release at application startup. Unsupported platforms
+and failed verification return an error. The SDK never resolves a mutable
+`talon-bin/latest` release.
+
+For an explicit native policy, set:
 
 ```text
 TALON_NATIVE_BUNDLE_DIR
@@ -197,6 +207,13 @@ TALON_NATIVE_EXPECTED_ABI_PROFILE
 TALON_NATIVE_EXPECTED_ABI_VERSION
 TALON_NATIVE_EXPECTED_HEADER_SHA256
 ```
+
+`TALON_NATIVE_ARTIFACT_PROFILE=runtime` selects the separately signed
+dynamic-library-only archive. Omit it (or set `full`) for the original signed
+archive containing both static and dynamic libraries. A future released Go
+runtime module will embed only the current platform's signed runtime archive
+and trusted release identity; `Open` will still verify its manifest, members,
+signature, and loaded Core self-manifest before use.
 
 `TALON_NATIVE_REQUIRED_CAPABILITIES` is an optional comma-separated list. A
 required signed feature that is gated, or not implemented by this SDK version,
@@ -524,14 +541,11 @@ revision-stream features. The external signed manifest deliberately retains its
 v1 `gates` shape; proof admission comes from the artifact-bound Core
 self-manifest rather than an invented external gate.
 
-The Core worktree now advertises `native_conditional_transaction_v2`. The
-`talon-bin` packaging generator requires binary self-attestation and covers all
-four platform targets, but its current release lock is still `UNRELEASED`, pins
-an obsolete ABI declaration, keeps runtime attestation gated, and has no
-production signing identity.
-Production startup therefore remains fail-closed until the lock is advanced
-atomically and a clean signed bundle exists. The SDK does not emulate this
-surface with process locks, read-then-write, multiple `setnx` calls, or SQL
+The signed `talon-bin` `v0.1.54` release includes Core binary
+self-attestation and four-platform SDK acceptance. Native startup still fails
+closed if its signature, pinned identity, archive members, or loaded Core
+self-manifest do not match. The SDK does not emulate conditional transactions
+with process locks, read-then-write, multiple `setnx` calls, or SQL
 interpolation.
 
 ## License

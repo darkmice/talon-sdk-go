@@ -51,7 +51,9 @@ var (
 // NativePolicy is trusted, out-of-band configuration. None of these identity
 // values are learned from a tag, bundle URL, or the manifest being verified.
 type NativePolicy struct {
-	BundleDir              string
+	BundleDir string
+	// RuntimeOnly selects the signed dynamic-library bundle without a static archive member.
+	RuntimeOnly            bool
 	PublicKeyPEM           []byte
 	ExpectedKeyID          string
 	ExpectedKeySHA256      string
@@ -331,8 +333,13 @@ func NativePolicyFromEnvironment() (NativePolicy, error) {
 			capabilities = append(capabilities, value)
 		}
 	}
+	profile := strings.TrimSpace(os.Getenv("TALON_NATIVE_ARTIFACT_PROFILE"))
+	if profile != "" && profile != "full" && profile != "runtime" {
+		return NativePolicy{}, fmt.Errorf("TALON_NATIVE_ARTIFACT_PROFILE must be full or runtime")
+	}
 	return NativePolicy{
 		BundleDir:              bundleDir,
+		RuntimeOnly:            profile == "runtime",
 		PublicKeyPEM:           publicKey,
 		ExpectedKeyID:          fields["TALON_NATIVE_EXPECTED_KEY_ID"],
 		ExpectedKeySHA256:      fields["TALON_NATIVE_EXPECTED_KEY_SHA256"],
@@ -385,6 +392,9 @@ func verifyNativeBundle(policy NativePolicy) (_ *verifiedNative, err error) {
 		return nil, fmt.Errorf("native bundle directory is unavailable")
 	}
 	manifestName := "libtalon-core-" + platform.Name + ".manifest.json"
+	if policy.RuntimeOnly {
+		manifestName = "libtalon-core-runtime-" + platform.Name + ".manifest.json"
+	}
 	manifestPath := filepath.Join(bundleDir, manifestName)
 	manifestBytes, err := readBoundedRegularFile(manifestPath, maxManifestBytes)
 	if err != nil {
@@ -530,17 +540,29 @@ func validateNativeManifest(manifest nativeManifest, manifestName string, platfo
 	if manifest.Build.Target != platform.Target || manifest.Build.Runner != platform.Runner || manifest.Build.Source == "" || manifest.Build.WorkflowRunID == "" || manifest.Build.Rustc == "" || manifest.Build.Cargo == "" || manifest.Build.Reproducibility == "" || !sameStrings(manifest.Build.Command, []string{"build", "--locked", "--release", "--lib"}) {
 		return fmt.Errorf("native build identity does not match platform contract")
 	}
-	if manifest.Artifact.Kind != "talon-core-native-library" || manifest.Artifact.Platform != platform.Name {
+	runtimeOnly := manifest.Artifact.Kind == "talon-core-native-runtime"
+	if (manifest.Artifact.Kind != "talon-core-native-library" && !runtimeOnly) || manifest.Artifact.Platform != platform.Name || runtimeOnly != policy.RuntimeOnly {
 		return fmt.Errorf("native artifact kind or platform mismatch")
 	}
-	expectedArchive := "libtalon-core-" + platform.Name + ".tar.gz"
+	prefix := "libtalon-core"
+	if runtimeOnly {
+		prefix = "libtalon-core-runtime"
+	}
+	expectedArchive := prefix + "-" + platform.Name + ".tar.gz"
 	if err := validateFileRecord(manifest.Artifact.Archive, expectedArchive); err != nil {
 		return fmt.Errorf("invalid native archive record: %w", err)
 	}
-	if len(manifest.Artifact.Files) != 5 {
+	expectedFileCount := 5
+	if runtimeOnly {
+		expectedFileCount = 4
+	}
+	if len(manifest.Artifact.Files) != expectedFileCount {
 		return fmt.Errorf("native archive file set is incomplete")
 	}
-	expectedFiles := map[string]struct{}{platform.StaticLibrary: {}, platform.DynamicLibrary: {}, "talon.h": {}, "LICENSE.core": {}, "NOTICE": {}}
+	expectedFiles := map[string]struct{}{platform.DynamicLibrary: {}, "talon.h": {}, "LICENSE.core": {}, "NOTICE": {}}
+	if !runtimeOnly {
+		expectedFiles[platform.StaticLibrary] = struct{}{}
+	}
 	files := make(map[string]fileRecord, len(manifest.Artifact.Files))
 	for _, record := range manifest.Artifact.Files {
 		if err := validateFileRecord(record, ""); err != nil {
@@ -558,8 +580,8 @@ func validateNativeManifest(manifest nativeManifest, manifestName string, platfo
 		return fmt.Errorf("native member set or header identity mismatch")
 	}
 	materialExpected := map[string]string{
-		"sbom":              "libtalon-core-" + platform.Name + ".sbom.cdx.json",
-		"license_inventory": "libtalon-core-" + platform.Name + ".licenses.json",
+		"sbom":              prefix + "-" + platform.Name + ".sbom.cdx.json",
+		"license_inventory": prefix + "-" + platform.Name + ".licenses.json",
 		"core_license":      "LICENSE.core",
 		"notice":            "NOTICE",
 	}
@@ -1000,7 +1022,7 @@ func bindBuildField(hash io.Writer, value string) {
 
 func hashNativePolicy(policy NativePolicy) [32]byte {
 	hash := sha256.New()
-	values := []string{policy.BundleDir, policy.ExpectedKeyID, policy.ExpectedKeySHA256, policy.ExpectedReleaseTag, policy.ExpectedTalonBinCommit, policy.ExpectedCoreRepository, policy.ExpectedCoreTag, policy.ExpectedCoreCommit, policy.ExpectedCoreVersion, policy.ExpectedABIProfile, fmt.Sprintf("%d", policy.ExpectedABIVersion), policy.ExpectedHeaderSHA256}
+	values := []string{policy.BundleDir, fmt.Sprintf("%t", policy.RuntimeOnly), policy.ExpectedKeyID, policy.ExpectedKeySHA256, policy.ExpectedReleaseTag, policy.ExpectedTalonBinCommit, policy.ExpectedCoreRepository, policy.ExpectedCoreTag, policy.ExpectedCoreCommit, policy.ExpectedCoreVersion, policy.ExpectedABIProfile, fmt.Sprintf("%d", policy.ExpectedABIVersion), policy.ExpectedHeaderSHA256}
 	values = append(values, policy.RequiredCapabilities...)
 	for _, value := range values {
 		_, _ = hash.Write([]byte{0})

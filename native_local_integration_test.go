@@ -28,7 +28,7 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 	if os.Getenv("TALON_TEST_PRODUCTION_NATIVE") == "1" {
 		t.Skip("local test artifact cannot share the process with a production native policy")
 	}
-	bundle, err := makeTestNativeBundle(t.TempDir())
+	bundle, err := makeTestNativeBundleProfile(t.TempDir(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,6 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 	manifest.Build.Cargo = "local test compiler not recorded"
 	manifest.Build.Reproducibility = "ephemeral local signed test artifact"
 	archiveName := manifest.Artifact.Archive.Path
-	staticPlaceholder := []byte("local test fixture: static library is not linked\n")
 	license, err := os.ReadFile(filepath.Join(bundle.policy.BundleDir, "LICENSE.core"))
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +90,6 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
-		platform.StaticLibrary:  staticPlaceholder,
 		platform.DynamicLibrary: library,
 		"talon.h":               header,
 		"LICENSE.core":          license,
@@ -100,7 +98,7 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 	var archive bytes.Buffer
 	gzipWriter := gzip.NewWriter(&archive)
 	tarWriter := tar.NewWriter(gzipWriter)
-	for _, name := range []string{platform.StaticLibrary, platform.DynamicLibrary, "talon.h", "LICENSE.core", "NOTICE"} {
+	for _, name := range []string{platform.DynamicLibrary, "talon.h", "LICENSE.core", "NOTICE"} {
 		contents := files[name]
 		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o500, Size: int64(len(contents)), Typeflag: tar.TypeReg}); err != nil {
 			t.Fatal(err)
