@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	talon "github.com/darkmice/talon-sdk-go"
 	"github.com/gogf/gf/v2/database/gdb"
 )
 
@@ -32,8 +33,8 @@ func init() {
 }
 
 func (d *Driver) New(core *gdb.Core, _ *gdb.ConfigNode) (gdb.DB, error) {
-	// GoFrame applies its own pool defaults after Driver.Open. Set the limit on
-	// the Core as well, or its default (unlimited) silently overrides Open's cap.
+	// Older signed Core artifacts can open only one physical native handle.
+	// Driver.Open raises both limits after attesting shared ownership support.
 	core.SetMaxOpenConnCount(1)
 	core.SetMaxIdleConnCount(1)
 	return &Driver{Core: core}, nil
@@ -126,11 +127,26 @@ func (d *Driver) Open(node *gdb.ConfigNode) (*sql.DB, error) {
 	if node.Host != "" || node.Port != "" || node.User != "" || node.Pass != "" || node.Link != "" || node.Extra != "" {
 		return nil, errors.New("talon: native adapter accepts only Type and Name, not server connection fields")
 	}
+	// Probe the loaded, signed Core before setting GoFrame's pool size. Its
+	// dynamic config is applied after Open returns and would otherwise override
+	// the sql.DB limit below. Existing artifacts stay at one native connection.
+	probe, err := talon.Open(node.Name)
+	if err != nil {
+		return nil, err
+	}
+	shared := probe.RequireCapability("native_shared_core") == nil
+	probe.Close()
+	maxConns := 1
+	if shared {
+		maxConns = 4
+	}
+	if d.Core != nil {
+		d.Core.SetMaxOpenConnCount(maxConns)
+		d.Core.SetMaxIdleConnCount(maxConns)
+	}
 	db := sql.OpenDB(nativeConnector{path: node.Name})
-	// Each sql.Conn owns one native handle and its SQL session. Keep pool use
-	// bounded to one handle until native session concurrency is exercised E2E.
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(maxConns)
+	db.SetMaxIdleConns(maxConns)
 	return db, nil
 }
 

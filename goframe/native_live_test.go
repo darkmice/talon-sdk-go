@@ -2,11 +2,13 @@ package goframe
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"math/big"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	talon "github.com/darkmice/talon-sdk-go"
 	"github.com/gogf/gf/v2/database/gdb"
@@ -249,6 +251,94 @@ func TestLocalSignedCoreGoFrameInterop(t *testing.T) {
 		t.Fatalf("committed row count=%d, %v", count, err)
 	}
 	verifyAdvancedSQLShapes(t, ctx, db)
+	verifyParallelNativeConnections(t, ctx, path)
+	tx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec("INSERT INTO gf_shared_sessions VALUES (?, ?)", 4, "gdb-pending"); err != nil {
+		t.Fatal(err)
+	}
+	shortCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if _, err := db.GetOne(shortCtx, "SELECT name FROM gf_shared_sessions WHERE id = ?", 4); talon.NativeCodeOf(err) != "busy" {
+		t.Fatalf("GoFrame pooled peer query = %v, native code %q", err, talon.NativeCodeOf(err))
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func verifyParallelNativeConnections(t *testing.T, ctx context.Context, path string) {
+	t.Helper()
+	pool := sql.OpenDB(nativeConnector{path: path})
+	pool.SetMaxOpenConns(4)
+	pool.SetMaxIdleConns(0)
+	defer pool.Close()
+	if _, err := pool.ExecContext(ctx, "CREATE TABLE gf_shared_sessions (id INT PRIMARY KEY, name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	a, err := pool.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	b, err := pool.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	c, err := pool.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	d, err := pool.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if pool.Stats().OpenConnections != 4 {
+		t.Fatalf("physical native connections = %d, want 4", pool.Stats().OpenConnections)
+	}
+	if _, err := a.ExecContext(ctx, "INSERT INTO gf_shared_sessions VALUES (?, ?)", 1, "shared"); err != nil {
+		t.Fatal(err)
+	}
+	var name string
+	for _, peer := range []*sql.Conn{b, c, d} {
+		if err := peer.QueryRowContext(ctx, "SELECT name FROM gf_shared_sessions WHERE id = ?", 1).Scan(&name); err != nil || name != "shared" {
+			t.Fatalf("peer read = %q, %v", name, err)
+		}
+	}
+	tx, err := a.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO gf_shared_sessions VALUES (?, ?)", 2, "pending"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.QueryRowContext(ctx, "SELECT name FROM gf_shared_sessions WHERE id = ?", 2).Scan(&name); talon.NativeCodeOf(err) != "busy" {
+		t.Fatalf("other session read during transaction = %v, native code %q", err, talon.NativeCodeOf(err))
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.QueryRowContext(ctx, "SELECT name FROM gf_shared_sessions WHERE id = ?", 2).Scan(&name); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("rolled-back row = %q, %v", name, err)
+	}
+	tx, err = b.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO gf_shared_sessions VALUES (?, ?)", 3, "committed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.QueryRowContext(ctx, "SELECT name FROM gf_shared_sessions WHERE id = ?", 3).Scan(&name); err != nil || name != "committed" {
+		t.Fatalf("committed peer read = %q, %v", name, err)
+	}
 }
 
 func verifyAdvancedSQLShapes(t *testing.T, ctx context.Context, db gdb.DB) {

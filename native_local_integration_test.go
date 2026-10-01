@@ -146,7 +146,7 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 	policy.ExpectedABIProfile = build.ABI.Profile
 	policy.ExpectedABIVersion = build.ABI.Version
 	policy.ExpectedHeaderSHA256 = build.HeaderSHA256
-	policy.RequiredCapabilities = []string{"native_kv_read"}
+	policy.RequiredCapabilities = []string{"native_kv_read", "native_shared_core"}
 	databasePath := t.TempDir()
 	db, err := OpenWithOptions(databasePath, OpenOptions{Native: policy})
 	if err != nil {
@@ -157,6 +157,39 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 	if _, err := db.QueryResult("CREATE TABLE sdk_sql_live (id INT PRIMARY KEY, name TEXT)"); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.RequireCapability("native_shared_core"); err != nil {
+		t.Fatalf("local Core omitted shared physical owner: %v", err)
+	}
+	peer, err := OpenWithOptions(databasePath, OpenOptions{Native: policy})
+	if err != nil {
+		t.Fatalf("second logical native handle: %v", err)
+	}
+	if _, err := db.QueryResult("INSERT INTO sdk_sql_live VALUES (10, 'shared')"); err != nil {
+		t.Fatal(err)
+	}
+	shared, err := peer.QueryResult("SELECT id FROM sdk_sql_live WHERE id = ?", IntegerValue(10))
+	if err != nil || len(shared.Rows) != 1 || len(shared.Columns) != 1 {
+		t.Fatalf("peer read result = %#v, %v", shared, err)
+	}
+	if _, err := db.QueryResult("BEGIN"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.QueryResult("INSERT INTO sdk_sql_live VALUES (11, 'pending')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := peer.QueryResult("SELECT id FROM sdk_sql_live"); NativeCodeOf(err) != "busy" {
+		t.Fatalf("other session during transaction = %v, native code %q", err, NativeCodeOf(err))
+	}
+	db.Close() // releasing this handle must roll back its pending transaction
+	visible, err := peer.QueryResult("SELECT id FROM sdk_sql_live WHERE id = ?", IntegerValue(11))
+	if err != nil || len(visible.Rows) != 0 {
+		t.Fatalf("closed session leaked pending row = %#v, %v", visible, err)
+	}
+	db, err = OpenWithOptions(databasePath, OpenOptions{Native: policy})
+	if err != nil {
+		t.Fatalf("reopen logical handle with peer alive: %v", err)
+	}
+	peer.Close()
 	empty, err := db.QueryResult("SELECT id, name FROM sdk_sql_live WHERE id = ?", IntegerValue(99))
 	if err != nil || len(empty.Columns) != 2 || empty.Columns[0] != "id" || empty.Columns[1] != "name" || len(empty.Rows) != 0 {
 		t.Fatalf("empty SQL result = %#v, %v", empty, err)
@@ -218,7 +251,7 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 		"TALON_NATIVE_EXPECTED_ABI_PROFILE="+policy.ExpectedABIProfile,
 		fmt.Sprintf("TALON_NATIVE_EXPECTED_ABI_VERSION=%d", policy.ExpectedABIVersion),
 		"TALON_NATIVE_EXPECTED_HEADER_SHA256="+policy.ExpectedHeaderSHA256,
-		"TALON_NATIVE_REQUIRED_CAPABILITIES=native_kv_read",
+		"TALON_NATIVE_REQUIRED_CAPABILITIES=native_kv_read,native_shared_core",
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
