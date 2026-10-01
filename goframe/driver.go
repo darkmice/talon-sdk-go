@@ -32,6 +32,10 @@ func init() {
 }
 
 func (d *Driver) New(core *gdb.Core, _ *gdb.ConfigNode) (gdb.DB, error) {
+	// GoFrame applies its own pool defaults after Driver.Open. Set the limit on
+	// the Core as well, or its default (unlimited) silently overrides Open's cap.
+	core.SetMaxOpenConnCount(1)
+	core.SetMaxIdleConnCount(1)
 	return &Driver{Core: core}, nil
 }
 

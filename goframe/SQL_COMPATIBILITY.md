@@ -3,7 +3,7 @@
 This matrix describes the GoFrame v2.8.3 `gdb` adapter against an embedded,
 signed Talon Core. It is based on `TestLocalSignedCoreGoFrameInterop`, invoked
 through `TestLocalSignedCoreKVInterop` with an ephemeral test signature and
-Core commit `1695fdfa097076230a37225382b6d88251fb8dac`. It is local
+clean Core commit `5d6f12e7bb8d1c1f1378be5d945dc26385bcbb38`. It is local
 interoperability evidence, not a released Core or production performance claim.
 
 | SQL workload | Verified through GoFrame gdb and signed Core |
@@ -15,23 +15,31 @@ interoperability evidence, not a released Core or production performance claim.
 | Relational and aggregate | aliased `LEFT JOIN` and filtered `INNER JOIN`, `GROUP BY`, parameterized `HAVING`, `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` |
 | Exact value | `DECIMAL(18,2)` write and readback without a float round trip |
 | Transaction | begin, rollback, commit, and readback |
+| Constraints and DDL | composite primary key, NOT NULL, unique index, `CREATE TABLE IF NOT EXISTS`, selected `ALTER TABLE` add/drop/type/unique operations, foreign key rejection of an absent parent, and TIMESTAMP/BOOLEAN/VARCHAR/BIGINT declarations |
+| Additional query shapes | three-table JOIN, `EXISTS`, `UNION`, CTE, window function, indexed `IN` result and `EXPLAIN`, and DECIMAL comparison/order with an exact `talon.DecimalValue` parameter |
 
 The native driver also has unit coverage for SQL result metadata, exact DECIMAL
 conversion, time parameters, generated insert ID handling, and SQL variant
 formatting. Those tests use a fake native database and do not establish the
 same signed Core interoperability as the matrix above.
 
-Common SQL shapes still lacking a GoFrame-to-signed-Core test include multiple
-joins, nested subqueries and `EXISTS`, `UNION`, CTEs, window functions, JSON
-and date expressions, and schema migrations. Core's own SQL tests cover many of
-these independently; that does not establish adapter behavior. A specific
-consumer workload should add its generated SQL to the live test before
+The additional shapes passed in the same signed-Core fixture. The fixture does
+not execute the SaaS schema documents or a released Server binary. JSON and
+date expressions remain outside this GoFrame matrix. A specific consumer
+workload should add its generated SQL to the live test and run it before
 claiming compatibility.
 
+The DECIMAL comparison fixture passes a typed `talon.DecimalValue`. A Go
+`string` parameter is TEXT and did not match the DECIMAL column in this
+fixture; financial queries must pass an exact DECIMAL value. The comparison
+fixture does not prove a DECIMAL range index plan.
+
 Performance admission is separate. The driver currently caps its `database/sql`
-pool at one native connection, and `QueryContext` converts the complete Core
-result into Go rows before iteration. No concurrent workload or large-result
-latency and allocation budget has been verified. For simple-column `DISTINCT`,
+pool at one native connection. `QueryContext` retains the complete Core result;
+the GoFrame projection now converts each row during iteration, avoiding a second
+whole-result copy, but this is not a SQL cursor or a bounded result. No concurrent
+workload or large-result latency and allocation budget has been verified. For
+simple-column `DISTINCT`,
 Core hashes selected source values without allocating projected duplicate
 rows, but this local test does not measure end-to-end throughput.
 The local SQL latency and allocation snapshot is in
