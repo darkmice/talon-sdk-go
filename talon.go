@@ -362,6 +362,9 @@ func (db *DB) RequireCapability(name string) error {
 	if name == "native_sql_session" && coreCapability.Version == 1 && containsString(db.nativeInfo.Features, "native_sql_session_v1") {
 		return nil
 	}
+	if name == "native_shared_core" && coreCapability.Version == 1 && containsString(db.nativeInfo.Features, "native_shared_core_v1") {
+		return nil
+	}
 	if name == "native_sql_result" && coreCapability.Version == 2 && containsString(db.nativeInfo.Features, "native_sql_result_v2") {
 		return nil
 	}

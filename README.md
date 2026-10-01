@@ -576,6 +576,14 @@ remain exact strings. The adapter does not parse SQL to guess columns or add
 A GoFrame transaction uses one native handle for `BEGIN`, statements, and
 `COMMIT` or `ROLLBACK`; closing that handle rolls back a pending transaction.
 Older artifacts fail the capability check before SQL execution.
+When a signed Core attests `native_shared_core` v1, the adapter allows up to
+four physical `database/sql` connections to the same directory. Each has its
+own stable SQL session and shares one process-local Core owner. The driver
+keeps the pool at one connection for older signed artifacts. An explicit
+transaction still occupies Core's single transaction slot: other sessions
+receive `busy` until the owner commits, rolls back, or closes. Separate
+application processes must connect to one Talon service process; they cannot
+each load a native library and open the same fjall directory.
 The tested GoFrame SQL workload and remaining coverage gaps are recorded in
 [goframe/SQL_COMPATIBILITY.md](goframe/SQL_COMPATIBILITY.md).
 
@@ -605,6 +613,9 @@ and its `talon_build_manifest` JSON through
 `TALON_TEST_LOCAL_CORE_BUILD_MANIFEST`. The fixture includes a test-only
 static-library placeholder and synthetic release metadata; passing it is
 local interoperability evidence, not a Talon release or production admission.
+It also opens two native handles on one directory and runs GoFrame with four
+physical connections, checking transaction ownership, Busy, rollback, and
+commit through the signed Core library.
 
 ## Parameterized SQL
 

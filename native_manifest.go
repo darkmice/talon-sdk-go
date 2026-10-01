@@ -500,7 +500,7 @@ func validateNativePolicy(policy NativePolicy) error {
 	}
 	seen := map[string]struct{}{}
 	for _, capability := range policy.RequiredCapabilities {
-		if capability != "storage_conditional_batch_v1" && capability != "storage_conditional_point_read" && capability != "storage_conditional_snapshot_read" && capability != "storage_conditional_snapshot_read_v2" && capability != "revision_stream" && capability != "native_kv_read" {
+		if capability != "storage_conditional_batch_v1" && capability != "storage_conditional_point_read" && capability != "storage_conditional_snapshot_read" && capability != "storage_conditional_snapshot_read_v2" && capability != "revision_stream" && capability != "native_kv_read" && capability != "native_shared_core" {
 			return fmt.Errorf("unknown required native capability %q", capability)
 		}
 		if _, exists := seen[capability]; exists {
@@ -882,7 +882,7 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 
 func verifyRequiredRuntimeCapabilities(build coreBuildManifest, required []string) error {
 	for _, name := range required {
-		if name != "revision_stream" && name != "storage_conditional_point_read" && name != "storage_conditional_snapshot_read" && name != "storage_conditional_snapshot_read_v2" && name != "native_kv_read" {
+		if name != "revision_stream" && name != "storage_conditional_point_read" && name != "storage_conditional_snapshot_read" && name != "storage_conditional_snapshot_read_v2" && name != "native_kv_read" && name != "native_shared_core" {
 			continue
 		}
 		capabilityName, version := name, 0
@@ -896,11 +896,15 @@ func verifyRequiredRuntimeCapabilities(build coreBuildManifest, required []strin
 			version = revisionStreamVersion
 		} else if name == "native_kv_read" {
 			version = 1
+		} else if name == "native_shared_core" {
+			version = 1
 		}
 		found := findNativeCapability(build.Capabilities, capabilityName, version)
 		available := false
 		if name == "native_kv_read" {
 			available = found != nil && found.Status == "available" && containsString(build.Features, "native_kv_read_v1") && containsString(build.ABI.RequiredSymbols, "talon_kv_read_v1")
+		} else if name == "native_shared_core" {
+			available = found != nil && found.Status == "available" && containsString(build.Features, "native_shared_core_v1") && containsString(build.ABI.RequiredSymbols, "talon_open") && containsString(build.ABI.RequiredSymbols, "talon_close") && containsString(build.ABI.RequiredSymbols, "talon_execute")
 		} else if name == "revision_stream" {
 			available = found != nil && found.Version == revisionStreamVersion && found.Status == "available" && containsString(build.Features, "revision_stream_v1") && containsString(build.Features, "revision_stream_v2_mmr_proof")
 		} else if name == "storage_conditional_point_read" {
