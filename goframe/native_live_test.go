@@ -269,6 +269,71 @@ func TestLocalSignedCoreGoFrameInterop(t *testing.T) {
 	}
 }
 
+// Exercise the released, signed Go runtime and GoFrame's public pool settings.
+// TALON_TEST_EMBEDDED_NATIVE is opt-in because the runtime is platform-specific.
+func TestEmbeddedGoFrameSequentialTransactions(t *testing.T) {
+	if os.Getenv("TALON_TEST_EMBEDDED_NATIVE") != "1" {
+		t.Skip("embedded native acceptance requires a release-ready signed Go runtime")
+	}
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "TALON_NATIVE_") {
+			t.Fatalf("embedded GoFrame test has explicit native policy %s", name)
+		}
+	}
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name      string
+		config    bool
+		requested int
+		want      int
+	}{
+		{name: "config node", config: true, requested: 1, want: 1},
+		{name: "setter before first use", requested: 1, want: 1},
+		{name: "shared core cap", config: true, requested: 8, want: 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := gdb.ConfigNode{Type: DriverName, Name: t.TempDir()}
+			if tc.config {
+				node.MaxOpenConnCount = tc.requested
+			}
+			db, err := gdb.New(node)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close(ctx)
+			if !tc.config {
+				db.SetMaxOpenConnCount(tc.requested)
+			}
+			if _, err := db.Exec(ctx, "CREATE TABLE tx_pool (id INT PRIMARY KEY)"); err != nil {
+				t.Fatal(err)
+			}
+			pool, err := db.Master()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := pool.Stats().MaxOpenConnections; got != tc.want {
+				t.Fatalf("physical pool max open = %d, want %d", got, tc.want)
+			}
+			if _, err := db.Exec(ctx, "INSERT INTO tx_pool VALUES (1)"); err != nil {
+				t.Fatal(err)
+			}
+			for id := 2; id <= 3; id++ {
+				id := id
+				if err := db.Transaction(ctx, func(_ context.Context, tx gdb.TX) error {
+					_, err := tx.Exec("INSERT INTO tx_pool VALUES (?)", id)
+					return err
+				}); err != nil {
+					t.Fatalf("transaction %d after bare write: %v", id, err)
+				}
+			}
+			if count, err := db.Model("tx_pool").Ctx(ctx).Count(); err != nil || count != 3 {
+				t.Fatalf("committed row count = %d, %v", count, err)
+			}
+		})
+	}
+}
+
 func verifyParallelNativeConnections(t *testing.T, ctx context.Context, path string) {
 	t.Helper()
 	pool := sql.OpenDB(nativeConnector{path: path})

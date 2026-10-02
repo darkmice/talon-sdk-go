@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	talon "github.com/darkmice/talon-sdk-go"
 	"github.com/gogf/gf/v2/database/gdb"
@@ -24,7 +25,12 @@ var (
 	ErrTransactionsUnavailable   = errors.New("loaded Talon Core lacks native SQL session capability")
 )
 
-type Driver struct{ *gdb.Core }
+type Driver struct {
+	*gdb.Core
+	poolMu          sync.Mutex
+	maxOpenOverride *int
+	maxIdleOverride *int
+}
 
 func init() {
 	if err := gdb.Register(DriverName, &Driver{}); err != nil {
@@ -33,11 +39,25 @@ func init() {
 }
 
 func (d *Driver) New(core *gdb.Core, _ *gdb.ConfigNode) (gdb.DB, error) {
-	// Older signed Core artifacts can open only one physical native handle.
-	// Driver.Open raises both limits after attesting shared ownership support.
-	core.SetMaxOpenConnCount(1)
-	core.SetMaxIdleConnCount(1)
+	// Driver.Open chooses the default after attesting shared ownership. Setting
+	// a default here would erase an explicit ConfigNode pool limit.
 	return &Driver{Core: core}, nil
+}
+
+// SetMaxOpenConnCount records GoFrame's dynamic setting so Driver.Open can
+// distinguish it from the native driver's capability-based default.
+func (d *Driver) SetMaxOpenConnCount(n int) {
+	d.poolMu.Lock()
+	d.maxOpenOverride = &n
+	d.poolMu.Unlock()
+	d.Core.SetMaxOpenConnCount(n)
+}
+
+func (d *Driver) SetMaxIdleConnCount(n int) {
+	d.poolMu.Lock()
+	d.maxIdleOverride = &n
+	d.poolMu.Unlock()
+	d.Core.SetMaxIdleConnCount(n)
 }
 
 func (d *Driver) GetChars() (string, string) { return "`", "`" }
@@ -140,13 +160,29 @@ func (d *Driver) Open(node *gdb.ConfigNode) (*sql.DB, error) {
 	if shared {
 		maxConns = 4
 	}
+	d.poolMu.Lock()
+	requestedOpen, requestedIdle := node.MaxOpenConnCount, node.MaxIdleConnCount
+	if d.maxOpenOverride != nil {
+		requestedOpen = *d.maxOpenOverride
+	}
+	if d.maxIdleOverride != nil {
+		requestedIdle = *d.maxIdleOverride
+	}
+	d.poolMu.Unlock()
+	if shared && requestedOpen > 0 && requestedOpen < maxConns {
+		maxConns = requestedOpen
+	}
+	idleConns := maxConns
+	if requestedIdle > 0 && requestedIdle < idleConns {
+		idleConns = requestedIdle
+	}
 	if d.Core != nil {
 		d.Core.SetMaxOpenConnCount(maxConns)
-		d.Core.SetMaxIdleConnCount(maxConns)
+		d.Core.SetMaxIdleConnCount(idleConns)
 	}
 	db := sql.OpenDB(nativeConnector{path: node.Name})
 	db.SetMaxOpenConns(maxConns)
-	db.SetMaxIdleConns(maxConns)
+	db.SetMaxIdleConns(idleConns)
 	return db, nil
 }
 
