@@ -35,9 +35,13 @@ The DECIMAL comparison fixture passes a typed `talon.DecimalValue`. A Go
 fixture; financial queries must pass an exact DECIMAL value. The comparison
 fixture does not prove a DECIMAL range index plan.
 
-Performance admission is separate. The driver caps its `database/sql` pool at
-four connections when the signed Core attests `native_shared_core` v1, and at
-one on older artifacts. The four-connection setting passed a local signed-Core
+Performance admission is separate. The driver defaults its `database/sql` pool
+to four connections when the signed Core attests `native_shared_core` v1, and
+caps it at one on older artifacts. A positive GoFrame `MaxOpenConnCount` or
+`SetMaxOpenConnCount` value set before the first database operation can lower
+the shared-Core default. Values above four remain capped at four. GoFrame
+caches a pool after its first use, so later setter calls do not resize that
+existing pool. The four-connection setting passed a local signed-Core
 four-connection transaction fixture; no throughput or tail-latency claim follows.
 `QueryContext` retains the complete Core result;
 the GoFrame projection now converts each row during iteration, avoiding a second
