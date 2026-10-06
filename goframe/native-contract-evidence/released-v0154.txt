@@ -1,0 +1,114 @@
+=== RUN   TestNativeSQLConsumerReadYourWrites
+=== RUN   TestNativeSQLConsumerReadYourWrites/binary
+    native_contract_live_test.go:190: route=binary release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+    native_contract_live_test.go:205: composite scan=[role-a] equality=[] indexed=[]
+    native_contract_live_test.go:207: rows=[], want [role-a]
+    native_contract_live_test.go:208: rows=[], want [role-a]
+    native_contract_live_test.go:211: composite indexed equality plan=[Table: assignments Access: Index scan (column: operator_id, index: idx_assignments_operator_id) Estimated rows: ~0 Indexes: operator_id, role_id] error=<nil>
+=== RUN   TestNativeSQLConsumerReadYourWrites/result_v2
+    native_contract_live_test.go:190: route=result_v2 release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+    native_contract_live_test.go:205: composite scan=[role-a] equality=[] indexed=[]
+    native_contract_live_test.go:207: rows=[], want [role-a]
+    native_contract_live_test.go:208: rows=[], want [role-a]
+    native_contract_live_test.go:211: composite indexed equality plan=[Table: assignments Access: Index scan (column: operator_id, index: idx_assignments_operator_id) Estimated rows: ~0 Indexes: operator_id, role_id] error=<nil>
+=== RUN   TestNativeSQLConsumerReadYourWrites/goframe
+    native_contract_live_test.go:205: composite scan=[role-a] equality=[] indexed=[]
+    native_contract_live_test.go:207: rows=[], want [role-a]
+    native_contract_live_test.go:208: rows=[], want [role-a]
+    native_contract_live_test.go:211: composite indexed equality plan=[Table: assignments Access: Index scan (column: operator_id, index: idx_assignments_operator_id) Estimated rows: ~0 Indexes: role_id, operator_id] error=<nil>
+--- FAIL: TestNativeSQLConsumerReadYourWrites (8.14s)
+    --- FAIL: TestNativeSQLConsumerReadYourWrites/binary (2.77s)
+    --- FAIL: TestNativeSQLConsumerReadYourWrites/result_v2 (1.29s)
+    --- FAIL: TestNativeSQLConsumerReadYourWrites/goframe (4.08s)
+=== RUN   TestNativeSQLConsumerDistinctAggregate
+=== RUN   TestNativeSQLConsumerDistinctAggregate/binary
+    native_contract_live_test.go:234: route=binary release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+    native_contract_live_test.go:240: row 0="3", want "2"
+=== RUN   TestNativeSQLConsumerDistinctAggregate/result_v2
+    native_contract_live_test.go:234: route=result_v2 release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+    native_contract_live_test.go:240: row 0="3", want "2"
+=== RUN   TestNativeSQLConsumerDistinctAggregate/goframe
+    native_contract_live_test.go:240: row 0="3", want "2"
+--- FAIL: TestNativeSQLConsumerDistinctAggregate (3.13s)
+    --- FAIL: TestNativeSQLConsumerDistinctAggregate/binary (1.32s)
+    --- FAIL: TestNativeSQLConsumerDistinctAggregate/result_v2 (0.88s)
+    --- FAIL: TestNativeSQLConsumerDistinctAggregate/goframe (0.93s)
+=== RUN   TestNativeSQLConsumerExactValues
+=== RUN   TestNativeSQLConsumerExactValues/binary
+    native_contract_live_test.go:250: route=binary release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+    native_contract_live_test.go:287: route=binary release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+=== RUN   TestNativeSQLConsumerExactValues/result_v2
+    native_contract_live_test.go:250: route=result_v2 release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+    native_contract_live_test.go:287: route=result_v2 release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+=== RUN   TestNativeSQLConsumerExactValues/goframe
+--- PASS: TestNativeSQLConsumerExactValues (7.56s)
+    --- PASS: TestNativeSQLConsumerExactValues/binary (1.48s)
+    --- PASS: TestNativeSQLConsumerExactValues/result_v2 (2.93s)
+    --- PASS: TestNativeSQLConsumerExactValues/goframe (3.15s)
+=== RUN   TestNativeSQLConsumerCommitRestart
+=== RUN   TestNativeSQLConsumerCommitRestart/binary/close
+    native_contract_live_test.go:315: write: === RUN   TestNativeSQLConsumerRestartChild
+            native_contract_live_test.go:330: route=binary release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+    native_contract_live_test.go:315: read: === RUN   TestNativeSQLConsumerRestartChild
+            native_contract_live_test.go:330: route=binary release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+            native_contract_live_test.go:350: restart tables=[committed]
+        --- PASS: TestNativeSQLConsumerRestartChild (1.48s)
+        PASS
+=== RUN   TestNativeSQLConsumerCommitRestart/binary/exit
+    native_contract_live_test.go:315: write: === RUN   TestNativeSQLConsumerRestartChild
+            native_contract_live_test.go:330: route=binary release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+    native_contract_live_test.go:315: read: === RUN   TestNativeSQLConsumerRestartChild
+            native_contract_live_test.go:330: route=binary release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+            native_contract_live_test.go:350: restart tables=[committed]
+            native_contract_live_test.go:352: rows=[], want [durable]
+        --- FAIL: TestNativeSQLConsumerRestartChild (2.09s)
+        FAIL
+    native_contract_live_test.go:317: read subprocess: exit status 1
+=== RUN   TestNativeSQLConsumerCommitRestart/result_v2/close
+    native_contract_live_test.go:315: write: === RUN   TestNativeSQLConsumerRestartChild
+            native_contract_live_test.go:330: route=result_v2 release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+    native_contract_live_test.go:315: read: === RUN   TestNativeSQLConsumerRestartChild
+            native_contract_live_test.go:330: route=result_v2 release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+            native_contract_live_test.go:350: restart tables=[committed]
+        --- PASS: TestNativeSQLConsumerRestartChild (1.83s)
+        PASS
+=== RUN   TestNativeSQLConsumerCommitRestart/result_v2/exit
+    native_contract_live_test.go:315: write: === RUN   TestNativeSQLConsumerRestartChild
+            native_contract_live_test.go:330: route=result_v2 release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+    native_contract_live_test.go:315: read: === RUN   TestNativeSQLConsumerRestartChild
+            native_contract_live_test.go:330: route=result_v2 release=v0.1.54 core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=2033f36e4666175e5bfe30e253993aeb91710d3782ca551d537d2f7ab4ce4610 platform=macos-arm64
+            native_contract_live_test.go:350: restart tables=[committed]
+            native_contract_live_test.go:352: rows=[], want [durable]
+        --- FAIL: TestNativeSQLConsumerRestartChild (1.85s)
+        FAIL
+    native_contract_live_test.go:317: read subprocess: exit status 1
+=== RUN   TestNativeSQLConsumerCommitRestart/goframe/close
+    native_contract_live_test.go:315: write: === RUN   TestNativeSQLConsumerRestartChild
+    native_contract_live_test.go:315: read: === RUN   TestNativeSQLConsumerRestartChild
+            native_contract_live_test.go:350: restart tables=[committed]
+        --- PASS: TestNativeSQLConsumerRestartChild (1.72s)
+        PASS
+=== RUN   TestNativeSQLConsumerCommitRestart/goframe/exit
+    native_contract_live_test.go:315: write: === RUN   TestNativeSQLConsumerRestartChild
+    native_contract_live_test.go:315: read: === RUN   TestNativeSQLConsumerRestartChild
+            native_contract_live_test.go:350: restart tables=[committed]
+            native_contract_live_test.go:352: rows=[], want [durable]
+        --- FAIL: TestNativeSQLConsumerRestartChild (1.75s)
+        FAIL
+    native_contract_live_test.go:317: read subprocess: exit status 1
+--- FAIL: TestNativeSQLConsumerCommitRestart (43.69s)
+    --- PASS: TestNativeSQLConsumerCommitRestart/binary/close (6.25s)
+    --- FAIL: TestNativeSQLConsumerCommitRestart/binary/exit (7.31s)
+    --- PASS: TestNativeSQLConsumerCommitRestart/result_v2/close (7.40s)
+    --- FAIL: TestNativeSQLConsumerCommitRestart/result_v2/exit (7.56s)
+    --- PASS: TestNativeSQLConsumerCommitRestart/goframe/close (7.91s)
+    --- FAIL: TestNativeSQLConsumerCommitRestart/goframe/exit (7.26s)
+=== RUN   TestNativeSQLConsumerRestartChild
+    native_contract_live_test.go:328: subprocess helper
+--- SKIP: TestNativeSQLConsumerRestartChild (0.00s)
+=== RUN   TestNativeSQLConsumerSingleOwner
+[Talon FFI] run_sql_param error: database is busy: 另一会话的显式事务进行中，当前语句被拒绝；请在其 COMMIT/ROLLBACK 后重试 | sql=BEGIN
+--- PASS: TestNativeSQLConsumerSingleOwner (4.15s)
+FAIL
+FAIL	github.com/darkmice/talon-sdk-go/goframe	67.359s
+FAIL
