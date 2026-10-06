@@ -79,7 +79,7 @@ func newNativeError(operation, message, nativeCode string) error {
 	}
 	code := CodeNativeUnclassified
 	switch nativeCode {
-	case "uncertain":
+	case "uncertain", "result_indeterminate":
 		code = CodeResultIndeterminate
 	case "conflict":
 		code = CodeNativeConflict
@@ -93,7 +93,7 @@ func newNativeError(operation, message, nativeCode string) error {
 		code = CodeNativeUnavailable
 	case "fenced":
 		code = CodeNativeFenced
-	case "timeout":
+	case "timeout", "deadline_exceeded":
 		code = CodeNativeTimeout
 	case "persistence_failed":
 		code = CodeNativePersistence

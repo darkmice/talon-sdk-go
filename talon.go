@@ -36,6 +36,9 @@ type DB struct {
 // OpenOptions contains trusted native-runtime configuration.
 type OpenOptions struct {
 	Native NativePolicy
+	// LocalDevelopment explicitly admits a hash-pinned local build without release trust.
+	// It cannot be combined with Native.
+	LocalDevelopment *LocalDevelopmentPolicy
 }
 
 var (
@@ -44,8 +47,19 @@ var (
 )
 
 // Open opens a database using an explicit native environment policy or the
-// release-pinned signed Go runtime module. Neither path accepts unsigned code.
+// release-pinned signed Go runtime module. Local development requires explicit opt-in.
 func Open(path string) (*DB, error) {
+	mode := os.Getenv("TALON_NATIVE_MODE")
+	if mode == NativeAdmissionLocalDevelopment {
+		policy, err := LocalDevelopmentPolicyFromEnvironment()
+		if err != nil {
+			return nil, newError(CodeNativeVerification, "open", "local development policy is incomplete", err)
+		}
+		return OpenWithOptions(path, OpenOptions{LocalDevelopment: &policy})
+	}
+	if mode != "" && mode != NativeAdmissionRelease {
+		return nil, newError(CodeNativeVerification, "open", "unknown TALON_NATIVE_MODE", nil)
+	}
 	policy, err := defaultNativePolicy()
 	if err != nil {
 		return nil, newError(CodeNativeVerification, "open", "native trust policy is incomplete", err)
@@ -53,13 +67,13 @@ func Open(path string) (*DB, error) {
 	return OpenWithOptions(path, OpenOptions{Native: policy})
 }
 
-// OpenWithOptions verifies the signed native bundle before dlopen and before a
+// OpenWithOptions verifies the selected native identity before dlopen and before a
 // Core database handle is created.
 func OpenWithOptions(path string, options OpenOptions) (*DB, error) {
 	if path == "" || strings.IndexByte(path, 0) >= 0 || !utf8.ValidString(path) {
 		return nil, newError(CodeInvalidArgument, "open", "database path is empty, contains NUL, or is not UTF-8", nil)
 	}
-	verified, err := ensureNativeLoaded(options.Native)
+	verified, err := ensureNativeLoadedOptions(options)
 	if err != nil {
 		return nil, err
 	}
@@ -74,16 +88,35 @@ func OpenWithOptions(path string, options OpenOptions) (*DB, error) {
 }
 
 func ensureNativeLoaded(policy NativePolicy) (*verifiedNative, error) {
+	return ensureNativeLoadedOptions(OpenOptions{Native: policy})
+}
+
+func ensureNativeLoadedOptions(options OpenOptions) (*verifiedNative, error) {
 	nativeLoadMu.Lock()
 	defer nativeLoadMu.Unlock()
-	policyHash := hashNativePolicy(policy)
+	policyHash := hashNativePolicy(options.Native)
+	if options.LocalDevelopment != nil {
+		if hashNativePolicy(options.Native) != hashNativePolicy(NativePolicy{}) {
+			return nil, newError(CodeNativeVerification, "load native library", "release and local development policies cannot be combined", nil)
+		}
+		if err := validateLocalDevelopmentPolicy(*options.LocalDevelopment); err != nil {
+			return nil, newError(CodeNativeVerification, "load native library", "invalid local development policy", err)
+		}
+		policyHash = hashLocalDevelopmentPolicy(*options.LocalDevelopment)
+	}
 	if loadedNative != nil {
 		if loadedNative.policyHash != policyHash {
 			return nil, newError(CodeNativeVerification, "load native library", "a different native trust policy is already active in this process", nil)
 		}
 		return loadedNative, nil
 	}
-	verified, err := verifyNativeBundle(policy)
+	var verified *verifiedNative
+	var err error
+	if options.LocalDevelopment != nil {
+		verified, err = verifyLocalDevelopment(*options.LocalDevelopment)
+	} else {
+		verified, err = verifyNativeBundle(options.Native)
+	}
 	if err != nil {
 		return nil, newError(CodeNativeVerification, "verify native bundle", "native bundle verification failed", err)
 	}
@@ -101,7 +134,7 @@ func ensureNativeLoaded(policy NativePolicy) (*verifiedNative, error) {
 	if err := attestLoadedNative(verified); err != nil {
 		C.talon_sdk_unload()
 		_ = removeVerifiedNative(verified)
-		return nil, newError(CodeNativeVerification, "attest loaded native library", "Core runtime identity does not match the signed artifact manifest", err)
+		return nil, newError(CodeNativeVerification, "attest loaded native library", "Core runtime identity does not match the admitted artifact", err)
 	}
 	loadedNative = verified
 	return verified, nil
@@ -135,7 +168,11 @@ func attestLoadedNative(verified *verifiedNative) error {
 	if err := verifyRequiredRuntimeCapabilities(build, verified.requiredCapabilities); err != nil {
 		return err
 	}
-	for _, symbol := range verified.Manifest.ABI.RequiredSymbols {
+	symbols := verified.Manifest.ABI.RequiredSymbols
+	if verified.Development != nil {
+		symbols = verified.developmentBuild.ABI.RequiredSymbols
+	}
+	for _, symbol := range symbols {
 		name := C.CString(symbol)
 		present := C.talon_sdk_has_symbol(name) != 0
 		C.free(unsafe.Pointer(name))
@@ -231,6 +268,10 @@ func (db *DB) execute(module, action string, params interface{}) (json.RawMessag
 	if err != nil {
 		return nil, newError(CodeProtocolViolation, "execute", "native JSON response exceeds the SDK bound or is unterminated", err)
 	}
+	return decodeCommandResult(outBytes, module, action)
+}
+
+func decodeCommandResult(outBytes []byte, module, action string) (json.RawMessage, error) {
 	var result cmdResult
 	if err := decodeStrictJSON(outBytes, &result); err != nil {
 		return nil, newError(CodeProtocolViolation, "execute", "invalid native JSON response", err)
@@ -278,7 +319,7 @@ func decodeNativeLeaderHint(data json.RawMessage) (*NativeLeaderHint, error) {
 	return &hint, nil
 }
 
-// NativeInfo returns the verified signed identity used by this DB.
+// NativeInfo returns the admitted identity and provenance used by this DB.
 func (db *DB) NativeInfo() NativeInfo {
 	info := db.nativeInfo
 	info.Features = append([]string(nil), db.nativeInfo.Features...)
@@ -356,6 +397,9 @@ func (db *DB) RequireCapability(name string) error {
 		return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("%s is %s%s", name, coreCapability.Status, reason), nil)
 	}
 	if name == "native_conditional_transaction_v2" && containsString(db.nativeInfo.Features, name) && containsString(db.nativeInfo.Features, "conditional_transaction_command_digest_v1") {
+		return nil
+	}
+	if name == "native_sql_context" && coreCapability.Version == 1 && containsString(db.nativeInfo.Features, "native_sql_context_v1") {
 		return nil
 	}
 	if name == "native_sql_session" && coreCapability.Version == 1 && containsString(db.nativeInfo.Features, "native_sql_session_v1") {

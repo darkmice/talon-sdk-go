@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	talon "github.com/darkmice/talon-sdk-go"
@@ -23,6 +24,10 @@ func (c nativeConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	db, err := talon.Open(c.path)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		db.Close()
 		return nil, err
 	}
 	return &nativeConn{db: db}, nil
@@ -40,15 +45,23 @@ func (nativeDriver) Open(path string) (driver.Conn, error) {
 }
 
 type nativeQueryDB interface {
-	QueryResult(string, ...talon.Value) (talon.SQLResult, error)
-	Exec(string, ...talon.Value) error
+	QueryResultContext(context.Context, string, ...talon.Value) (talon.SQLResult, error)
+	ExecContext(context.Context, string, ...talon.Value) error
+	SQLRollbackContext(context.Context) error
 	RequireCapability(string) error
 	Close()
 }
 
-type nativeConn struct{ db nativeQueryDB }
+type nativeConn struct {
+	db      nativeQueryDB
+	invalid atomic.Bool
+}
 
-func (c *nativeConn) Close() error { c.db.Close(); return nil }
+func (c *nativeConn) Close() error { c.invalid.Store(true); c.db.Close(); return nil }
+
+// Invalid terminal sessions are discarded by database/sql without ErrBadConn,
+// which could cause automatic replay of a mutation whose outcome is unknown.
+func (c *nativeConn) IsValid() bool { return !c.invalid.Load() }
 func (c *nativeConn) Begin() (driver.Tx, error) {
 	return c.BeginTx(context.Background(), driver.TxOptions{})
 }
@@ -60,18 +73,60 @@ func (c *nativeConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver
 		return nil, errors.New("talon: requested transaction options are unsupported")
 	}
 	if err := c.db.RequireCapability("native_sql_session"); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTransactionsUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrTransactionsUnavailable, err)
 	}
-	if err := c.db.Exec("BEGIN"); err != nil {
+	if err := c.db.ExecContext(ctx, "BEGIN"); err != nil {
+		_ = c.Close()
 		return nil, err
 	}
-	return &nativeTx{db: c.db}, nil
+	return &nativeTx{db: c.db, conn: c, ctx: ctx}, nil
 }
 
-type nativeTx struct{ db nativeQueryDB }
+type nativeTx struct {
+	db   nativeQueryDB
+	conn *nativeConn
+	ctx  context.Context
+}
 
-func (t *nativeTx) Commit() error   { return t.db.Exec("COMMIT") }
-func (t *nativeTx) Rollback() error { return t.db.Exec("ROLLBACK") }
+func (t *nativeTx) Commit() error {
+	ctx := t.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	err := mutationOutcomeError("COMMIT", t.db.ExecContext(ctx, "COMMIT"))
+	if err != nil && t.conn != nil {
+		_ = t.conn.Close()
+	}
+	return err
+}
+func (t *nativeTx) Rollback() error {
+	ctx := t.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	err := t.db.SQLRollbackContext(ctx)
+	if err != nil && t.conn != nil {
+		_ = t.conn.Close()
+	}
+	return err
+}
+
+// A malformed response after dispatch cannot prove the write outcome. Preserve
+// the protocol cause and native codes, but expose uncertainty to retry callers.
+// Core rejections (including busy at BEGIN) keep their original classification.
+func mutationOutcomeError(operation string, err error) error {
+	if talon.ErrorCodeOf(err) == talon.CodeProtocolViolation {
+		return &talon.TalonError{Code: talon.CodeResultIndeterminate, NativeCode: talon.NativeCodeOf(err),
+			Operation: operation, Message: "native SQL response could not prove the mutation outcome", Cause: err}
+	}
+	return err
+}
+
+func invalidMutationResult(operation, message string) error {
+	return mutationOutcomeError(operation, &talon.TalonError{
+		Code: talon.CodeProtocolViolation, Operation: operation, Message: message,
+	})
+}
 func (c *nativeConn) Prepare(query string) (driver.Stmt, error) {
 	return &nativeStmt{conn: c, query: query}, nil
 }
@@ -79,7 +134,7 @@ func (c *nativeConn) Ping(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err := c.db.QueryResult("SHOW TABLES")
+	_, err := c.db.QueryResultContext(ctx, "SHOW TABLES")
 	return err
 }
 func (c *nativeConn) CheckNamedValue(value *driver.NamedValue) error {
@@ -97,7 +152,7 @@ func (c *nativeConn) QueryContext(ctx context.Context, statement string, args []
 	if err != nil {
 		return nil, err
 	}
-	resultSet, err := c.db.QueryResult(statement, params...)
+	resultSet, err := c.db.QueryResultContext(ctx, statement, params...)
 	if err != nil {
 		return nil, err
 	}
@@ -129,15 +184,15 @@ func (c *nativeConn) ExecContext(ctx context.Context, statement string, args []d
 	}
 	mutationSQL := normalizeMutationSQL(statement)
 	if mutation, ok := mutationKind(mutationSQL); ok {
-		resultSet, err := c.db.QueryResult(mutationSQL, params...)
+		resultSet, err := c.db.QueryResultContext(ctx, mutationSQL, params...)
 		if err != nil {
-			return nil, err
+			return nil, mutationOutcomeError(mutation, err)
 		}
 		if resultSet.AffectedRows == nil {
-			return nil, fmt.Errorf("talon: Core omitted affected rows for %s", mutation)
+			return nil, invalidMutationResult(mutation, "Core omitted affected rows")
 		}
 		if *resultSet.AffectedRows > math.MaxInt64 {
-			return nil, errors.New("talon: affected row count exceeds database/sql range")
+			return nil, invalidMutationResult(mutation, "affected row count exceeds database/sql range")
 		}
 		result := nativeResult{affected: int64(*resultSet.AffectedRows)}
 		if resultSet.LastInsertID != nil {
@@ -157,8 +212,8 @@ func (c *nativeConn) ExecContext(ctx context.Context, statement string, args []d
 	if strings.Contains(trimmed, ";") {
 		return nil, errors.New("talon: Exec accepts one statement at a time")
 	}
-	if _, err := c.db.QueryResult(statement, params...); err != nil {
-		return nil, err
+	if _, err := c.db.QueryResultContext(ctx, statement, params...); err != nil {
+		return nil, mutationOutcomeError(verb, err)
 	}
 	return nativeResult{}, nil
 }

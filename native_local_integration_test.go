@@ -233,10 +233,11 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
 	if err := os.WriteFile(publicKeyPath, bundle.policy.PublicKeyPEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("go", "test", "./goframe", "-run", "^TestLocalSignedCoreGoFrameInterop$", "-count=1", "-v")
+	cmd := exec.Command("go", "test", "-ldflags=-linkmode=external", "./goframe", "-run", "^Test(LocalSignedCoreGoFrameInterop|NativeSQLConsumer.*)$", "-count=1", "-v")
 	cmd.Env = append(os.Environ(),
 		"TALON_GOFRAME_LIVE_DB="+filepath.Join(t.TempDir(), "goframe"),
 		"TALON_NATIVE_BUNDLE_DIR="+policy.BundleDir,
+		"TALON_NATIVE_ARTIFACT_PROFILE=runtime",
 		"TALON_NATIVE_PUBLIC_KEY_FILE="+publicKeyPath,
 		"TALON_NATIVE_EXPECTED_KEY_ID="+policy.ExpectedKeyID,
 		"TALON_NATIVE_EXPECTED_KEY_SHA256="+policy.ExpectedKeySHA256,

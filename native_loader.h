@@ -5,6 +5,13 @@
 #include <stdint.h>
 
 typedef struct TalonSDKHandle TalonSDKHandle;
+typedef struct TalonSDKSqlContext TalonSDKSqlContext;
+
+TalonSDKSqlContext *talon_sdk_sql_context_new(uint64_t timeout_ms);
+int talon_sdk_sql_context_cancel(TalonSDKSqlContext *ctx);
+void talon_sdk_sql_context_free(TalonSDKSqlContext *ctx);
+int talon_sdk_execute_sql_context(const TalonSDKHandle *handle, const char *cmd,
+    TalonSDKSqlContext *ctx, char **output, char *code, size_t code_len);
 
 int talon_sdk_load(const char *library_path);
 void talon_sdk_unload(void);
