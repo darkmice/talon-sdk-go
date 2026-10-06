@@ -1,0 +1,2 @@
+ok  	github.com/darkmice/talon-sdk-go/server	0.471s
+ok  	github.com/darkmice/talon-sdk-go/internal/serverprotocol	7.708s

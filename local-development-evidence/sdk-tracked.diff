@@ -1,0 +1,574 @@
+diff --git a/README.md b/README.md
+index 3a162df..3651985 100644
+--- a/README.md
++++ b/README.md
+@@ -155,7 +155,7 @@ band before supplying it. Until such an artifact exists, the correct state is
+ Production native code is not selected from a tag, `latest` URL, linker search
+ path, or the historical headers/libraries under `include/` and `lib/`. Those
+ files are retained only for source compatibility and are not trust roots or
+-runtime fallbacks. `Open` requires an out-of-band trust policy and a
++runtime fallbacks. The default release mode of `Open` requires an out-of-band trust policy and a
+ `talon-native-manifest-v1` offline bundle. It verifies, in order:
+ 
+ - strict manifest JSON (duplicate and unknown fields are rejected);
+@@ -180,7 +180,8 @@ platforms fail closed before bundle access.
+ ## Open
+ 
+ Applications may pass a `NativePolicy` directly with `OpenWithOptions`.
+-`Open` first checks whether any `TALON_NATIVE_*` environment variable is set;
++Except for the explicit local development mode below, `Open` checks whether any
++release `TALON_NATIVE_*` environment variable is set;
+ if so, it reads the complete explicit policy below and fails on a partial one.
+ Otherwise it selects the version-pinned `talon-bin/go-runtime` module. That
+ module is pinned to the signed `v0.1.54` release and embeds the native runtime
+@@ -234,6 +235,46 @@ if err != nil {
+ defer db.Close()
+ ```
+ 
++### Explicit local development native admission
++
++Already-built dirty/debug Core libraries can be used without a Core/SDK release:
++
++```sh
++CGO_ENABLED=1 GOWORK=off go run ./cmd/talon-native-dev prepare \
++  --library /absolute/path/libtalon.dylib \
++  --header /absolute/path/talon.h \
++  --build-profile debug --out /absolute/path/new-config
++source /absolute/path/new-config/env.sh
++```
++
++`prepare` executes the selected local native code, extracts its actual
++`talon_build_manifest` ABI output, and creates a new exclusive directory. It does
++not sign an artifact or invent release identity. The CLI defaults to requiring
++`native_sql_result@2,native_sql_session@1,native_shared_core@1`; `--require` accepts
++comma-separated `name@version` capabilities with available status and matching
++features. SDK operation gates and the release-only conditional-batch gate remain
++enforced. The default release path still rejects dirty source and unsigned bundles.
++
++`env.sh` contains exactly `TALON_NATIVE_MODE=local-development`,
++`TALON_NATIVE_DEV_POLICY_FILE` (absolute path), and
++`TALON_NATIVE_DEV_POLICY_SHA256`. The pinned policy fixes canonical absolute
++library, header, self-manifest paths and SHA256 values. Loading verifies the
++selected bytes, copies the library into a private directory, checks the exact
++runtime self-manifest SHA256, ABI/symbols, target, build binding and capabilities.
++Mixed development/release environment fields fail closed. Unknown modes or
++partial development policies never silently select another runtime.
++
++Alternatively pass `OpenOptions{LocalDevelopment: &policy}` directly. It cannot
++be combined with `Native`. `NativeInfo().Admission` is `local-development`,
++`CoreGitDirty` comes from the real self-manifest, and release tag/signing-key
++fields are empty. `BuildProfile` is **caller-declared**, explicitly labeled by
++`BuildProfileSource`: the current Core ABI does not attest debug/release profile.
++One process admits one policy; rebuild, prepare a new config and restart to change
++the loaded runtime. Production callers should keep release mode and release policy.
++
++See [the local development handoff](LOCAL_DEVELOPMENT_HANDOFF.zh-CN.md) for the
++verified artifact, source path, temporary consumer modfile and test commands.
++
+ ## Parameterized SQL and exact values
+ 
+ `Query` and `Exec` use Core's binary parameter ABI. SQL is never assembled by
+diff --git a/goframe/SQL_COMPATIBILITY.md b/goframe/SQL_COMPATIBILITY.md
+index 6ee21b7..95d4f5e 100644
+--- a/goframe/SQL_COMPATIBILITY.md
++++ b/goframe/SQL_COMPATIBILITY.md
+@@ -1,10 +1,20 @@
+ # GoFrame native SQL compatibility
+ 
++The signed-artifact baseline below retains its original evidence. A separate
++2026-10-04 dirty Core development candidate passes read-your-writes, restart,
++exact-value and single-owner contracts through explicit local development
++admission; see [the development handoff](../LOCAL_DEVELOPMENT_HANDOFF.zh-CN.md).
++That candidate is not a released or production-admitted Core.
++
+ This matrix describes the GoFrame v2.8.3 `gdb` adapter against an embedded,
+ signed Talon Core. It is based on `TestLocalSignedCoreGoFrameInterop`, invoked
+ through `TestLocalSignedCoreKVInterop` with an ephemeral test signature and
+ clean Core commit `a968c4db18d1f14b51d9d4b2e4f55ec5a642e72c`. It is local
+ interoperability evidence, not a released Core or production performance claim.
++The matrix covers the listed statement shapes only. The stricter consumer
++contracts below currently fail on both that local Core and signed go-runtime
++v0.1.54; the matrix does not establish complete transaction correctness or
++durable COMMIT.
+ 
+ | SQL workload | Verified through GoFrame gdb and signed Core |
+ | --- | --- |
+@@ -14,7 +24,7 @@ interoperability evidence, not a released Core or production performance claim.
+ | Result shaping | projection, `DISTINCT`, ascending and descending order, page/limit/offset |
+ | Relational and aggregate | aliased `LEFT JOIN` and filtered `INNER JOIN`, `GROUP BY`, parameterized `HAVING`, `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` |
+ | Exact value | `DECIMAL(18,2)` write and readback without a float round trip |
+-| Transaction | begin, rollback, commit, and readback |
++| Transaction | begin, rollback, commit, and same-process readback of the tested single-PK shapes; secondary-index read-your-writes and durable restart remain failing contracts |
+ | Independent native sessions | four physical handles on one directory, peer read/write visibility, Busy during an explicit transaction, rollback and commit |
+ | Constraints and DDL | composite primary key, NOT NULL, unique index, `CREATE TABLE IF NOT EXISTS`, selected `ALTER TABLE` add/drop/type/unique operations, foreign key rejection of an absent parent, and TIMESTAMP/BOOLEAN/VARCHAR/BIGINT declarations |
+ | Additional query shapes | three-table JOIN, `EXISTS`, `UNION`, CTE, window function, indexed `IN` result and `EXPLAIN`, and DECIMAL comparison/order with an exact `talon.DecimalValue` parameter |
+@@ -30,6 +40,44 @@ date expressions remain outside this GoFrame matrix. A specific consumer
+ workload should add its generated SQL to the live test and run it before
+ claiming compatibility.
+ 
++## Consumer acceptance contracts (2026-10-04)
++
++`TestNativeSQLConsumer*` runs the same bound SQL through direct binary native
++SQL, native v2 result SQL, and GoFrame. These tests assert healthy behavior and
++fail on wrong answers; reproducing a known defect is not a passing acceptance
++result. They are opt-in with `TALON_TEST_EMBEDDED_NATIVE=1`, and also run in the
++local signed fixture. Signature/load failures are fatal when enabled.
++
++| Contract | Signed go-runtime v0.1.54 / Core `6010d748aebd3c4e595534ed4a9e959e7e5334cf` |
++| --- | --- |
++| Composite PK INSERT read-your-writes via secondary-index equality | **FAIL** in all three routes; full scan sees the pending row, index probes do not; EXPLAIN confirms the index path |
++| Single-PK point read-your-writes, DELETE then rollback | PASS for the tested shapes |
++| Projection DISTINCT versus COUNT(DISTINCT) | Projection returns two operators; aggregate incorrectly returns three: **FAIL** in all three routes |
++| COMMIT, immediate process exit without Close, new-process read | **FAIL** in all three routes; lost row or schema; clean Close control passes |
++| Typed DECIMAL, int64 extrema, INTEGER nanos | PASS: exact parameters, transaction readback, commit and Close/reopen; no float round trip |
++| Directory transaction owner and outer-db callback escape | PASS: second BEGIN and peer/outer SELECT/INSERT/UPDATE/DELETE rejected with typed `busy`, no side effects, owner released after rollback |
++
++The clean locally signed Core `a968c4db18d1f14b51d9d4b2e4f55ec5a642e72c`
++also fails the three contracts above. This is local test-signature evidence,
++separate from the released runtime. Consumer v0.7.5 tests on actual schema
++confirm the indexed visibility and owner behavior, but retain characterization
++assertions for the old defect. They are not evidence that it has been repaired.
++See [the consumer integration report](SQL_CONSUMER_CONTRACT.zh-CN.md) for the
++source/artifact/consumer evidence, logs, Core ownership, and upgrade dependencies.
++
++The SDK preserves the transaction capability sentinel and typed native cause.
++BEGIN `busy` remains a refusal. After COMMIT or a dispatched write, invalid
++result protocol/affected-row metadata is `CodeResultIndeterminate` with the
++protocol error retained in its cause; an explicit Core rejection keeps its
++original code. Callers must retain the chain and avoid blind retries. These
++malformed-response cases have component fault-injection coverage, not a claimed
++native Core fault-injection run. Native SQL receipt recovery is not established
++by the conditional-KV receipt API.
++
++Go `time.Time` parameters map to millisecond TIMESTAMP. The nanos contract uses
++int64/INTEGER explicitly. Exact DECIMAL round trips do not establish exact
++SUM/AVG or all precision/scale and range-index behavior.
++
+ The DECIMAL comparison fixture passes a typed `talon.DecimalValue`. A Go
+ `string` parameter is TEXT and did not match the DECIMAL column in this
+ fixture; financial queries must pass an exact DECIMAL value. The comparison
+diff --git a/goframe/native_sql.go b/goframe/native_sql.go
+index af536b9..9bfacb7 100644
+--- a/goframe/native_sql.go
++++ b/goframe/native_sql.go
+@@ -60,7 +60,7 @@ func (c *nativeConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver
+ 		return nil, errors.New("talon: requested transaction options are unsupported")
+ 	}
+ 	if err := c.db.RequireCapability("native_sql_session"); err != nil {
+-		return nil, fmt.Errorf("%w: %v", ErrTransactionsUnavailable, err)
++		return nil, fmt.Errorf("%w: %w", ErrTransactionsUnavailable, err)
+ 	}
+ 	if err := c.db.Exec("BEGIN"); err != nil {
+ 		return nil, err
+@@ -70,8 +70,27 @@ func (c *nativeConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver
+ 
+ type nativeTx struct{ db nativeQueryDB }
+ 
+-func (t *nativeTx) Commit() error   { return t.db.Exec("COMMIT") }
++func (t *nativeTx) Commit() error {
++	return mutationOutcomeError("COMMIT", t.db.Exec("COMMIT"))
++}
+ func (t *nativeTx) Rollback() error { return t.db.Exec("ROLLBACK") }
++
++// A malformed response after dispatch cannot prove the write outcome. Preserve
++// the protocol cause and native codes, but expose uncertainty to retry callers.
++// Core rejections (including busy at BEGIN) keep their original classification.
++func mutationOutcomeError(operation string, err error) error {
++	if talon.ErrorCodeOf(err) == talon.CodeProtocolViolation {
++		return &talon.TalonError{Code: talon.CodeResultIndeterminate, NativeCode: talon.NativeCodeOf(err),
++			Operation: operation, Message: "native SQL response could not prove the mutation outcome", Cause: err}
++	}
++	return err
++}
++
++func invalidMutationResult(operation, message string) error {
++	return mutationOutcomeError(operation, &talon.TalonError{
++		Code: talon.CodeProtocolViolation, Operation: operation, Message: message,
++	})
++}
+ func (c *nativeConn) Prepare(query string) (driver.Stmt, error) {
+ 	return &nativeStmt{conn: c, query: query}, nil
+ }
+@@ -131,13 +150,13 @@ func (c *nativeConn) ExecContext(ctx context.Context, statement string, args []d
+ 	if mutation, ok := mutationKind(mutationSQL); ok {
+ 		resultSet, err := c.db.QueryResult(mutationSQL, params...)
+ 		if err != nil {
+-			return nil, err
++			return nil, mutationOutcomeError(mutation, err)
+ 		}
+ 		if resultSet.AffectedRows == nil {
+-			return nil, fmt.Errorf("talon: Core omitted affected rows for %s", mutation)
++			return nil, invalidMutationResult(mutation, "Core omitted affected rows")
+ 		}
+ 		if *resultSet.AffectedRows > math.MaxInt64 {
+-			return nil, errors.New("talon: affected row count exceeds database/sql range")
++			return nil, invalidMutationResult(mutation, "affected row count exceeds database/sql range")
+ 		}
+ 		result := nativeResult{affected: int64(*resultSet.AffectedRows)}
+ 		if resultSet.LastInsertID != nil {
+@@ -158,7 +177,7 @@ func (c *nativeConn) ExecContext(ctx context.Context, statement string, args []d
+ 		return nil, errors.New("talon: Exec accepts one statement at a time")
+ 	}
+ 	if _, err := c.db.QueryResult(statement, params...); err != nil {
+-		return nil, err
++		return nil, mutationOutcomeError(verb, err)
+ 	}
+ 	return nativeResult{}, nil
+ }
+diff --git a/goframe/native_sql_test.go b/goframe/native_sql_test.go
+index 4eef17a..0852b52 100644
+--- a/goframe/native_sql_test.go
++++ b/goframe/native_sql_test.go
+@@ -19,11 +19,13 @@ type fakeNative struct {
+ 	execCalls  []string
+ 	result     talon.SQLResult
+ 	capability error
++	execError  error
++	queryError error
+ }
+ 
+ func (f *fakeNative) QueryResult(sql string, _ ...talon.Value) (talon.SQLResult, error) {
+ 	f.queryCalls = append(f.queryCalls, sql)
+-	return f.result, nil
++	return f.result, f.queryError
+ }
+ 
+ func TestNativeInsertIdRequiresIntegerSinglePrimaryKey(t *testing.T) {
+@@ -71,7 +73,7 @@ func TestGoFrameInsertVariantsUseTalonNativeSyntax(t *testing.T) {
+ }
+ func (f *fakeNative) Exec(sql string, _ ...talon.Value) error {
+ 	f.execCalls = append(f.execCalls, sql)
+-	return nil
++	return f.execError
+ }
+ func (*fakeNative) Close()                           {}
+ func (f *fakeNative) RequireCapability(string) error { return f.capability }
+@@ -217,3 +219,70 @@ func TestNativeSaveUsesTalonConflictSyntax(t *testing.T) {
+ 		t.Fatalf("upsert=%q", statement)
+ 	}
+ }
++
++func TestNativeTransactionErrorContract(t *testing.T) {
++	cause := errors.New("capability evidence")
++	capability := &talon.TalonError{Code: talon.CodeCapabilityUnavailable, Cause: cause}
++	fake := &fakeNative{capability: capability}
++	conn := &nativeConn{db: fake}
++	_, err := conn.Begin()
++	var typed *talon.TalonError
++	if !errors.Is(err, ErrTransactionsUnavailable) || !errors.Is(err, cause) || !errors.As(err, &typed) || talon.ErrorCodeOf(err) != talon.CodeCapabilityUnavailable {
++		t.Fatalf("capability error chain lost: %v", err)
++	}
++	if len(fake.execCalls) != 0 {
++		t.Fatal("BEGIN sent despite missing capability")
++	}
++	busy := &talon.TalonError{Code: talon.CodeNativeUnclassified, NativeCode: "busy", Cause: cause}
++	fake.capability, fake.execError = nil, busy
++	if _, err := conn.Begin(); err != busy || talon.NativeCodeOf(err) != "busy" || talon.ErrorCodeOf(err) == talon.CodeResultIndeterminate {
++		t.Fatalf("BEGIN refusal changed classification: %v", err)
++	}
++	fake.execError = nil
++	tx, err := conn.Begin()
++	if err != nil {
++		t.Fatal(err)
++	}
++	uncertain := &talon.TalonError{Code: talon.CodeResultIndeterminate, NativeCode: "uncertain", Cause: cause}
++	fake.execError = uncertain
++	if err := tx.Commit(); err != uncertain || !errors.Is(err, cause) || talon.NativeCodeOf(err) != "uncertain" {
++		t.Fatalf("COMMIT lost uncertainty: %v", err)
++	}
++	protocol := &talon.TalonError{Code: talon.CodeProtocolViolation, Cause: cause}
++	fake.execError = protocol
++	err = tx.Commit()
++	if talon.ErrorCodeOf(err) != talon.CodeResultIndeterminate || !errors.Is(err, protocol) || !errors.Is(err, cause) {
++		t.Fatalf("malformed COMMIT response must retain cause and signal uncertainty: %v", err)
++	}
++	fake.execError = busy
++	if err := tx.Commit(); err != busy {
++		t.Fatalf("explicit Core refusal was reclassified: %v", err)
++	}
++	if len(fake.execCalls) != 5 {
++		t.Fatalf("unexpected retry or cleanup call: %v", fake.execCalls)
++	}
++}
++
++func TestNativeMutationResultCannotProveOutcome(t *testing.T) {
++	for _, tc := range []struct {
++		name       string
++		result     talon.SQLResult
++		queryError error
++	}{
++		{name: "missing metadata"},
++		{name: "overflow metadata", result: func() talon.SQLResult { n := uint64(1) << 63; return talon.SQLResult{AffectedRows: &n} }()},
++		{name: "malformed response", queryError: &talon.TalonError{Code: talon.CodeProtocolViolation}},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			fake := &fakeNative{result: tc.result, queryError: tc.queryError}
++			conn := &nativeConn{db: fake}
++			result, err := conn.ExecContext(context.Background(), "INSERT INTO items VALUES (?)", []driver.NamedValue{{Ordinal: 1, Value: 1}})
++			if result != nil || talon.ErrorCodeOf(err) != talon.CodeResultIndeterminate || !errors.Is(err, &talon.TalonError{Code: talon.CodeProtocolViolation}) {
++				t.Fatalf("mutation result=%v error=%v", result, err)
++			}
++			if len(fake.queryCalls) != 1 {
++				t.Fatalf("mutation retried: %v", fake.queryCalls)
++			}
++		})
++	}
++}
+diff --git a/native_local_integration_test.go b/native_local_integration_test.go
+index 64b8c9d..741f04e 100644
+--- a/native_local_integration_test.go
++++ b/native_local_integration_test.go
+@@ -233,10 +233,11 @@ func TestLocalSignedCoreKVInterop(t *testing.T) {
+ 	if err := os.WriteFile(publicKeyPath, bundle.policy.PublicKeyPEM, 0o600); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	cmd := exec.Command("go", "test", "./goframe", "-run", "^TestLocalSignedCoreGoFrameInterop$", "-count=1", "-v")
++	cmd := exec.Command("go", "test", "-ldflags=-linkmode=external", "./goframe", "-run", "^Test(LocalSignedCoreGoFrameInterop|NativeSQLConsumer.*)$", "-count=1", "-v")
+ 	cmd.Env = append(os.Environ(),
+ 		"TALON_GOFRAME_LIVE_DB="+filepath.Join(t.TempDir(), "goframe"),
+ 		"TALON_NATIVE_BUNDLE_DIR="+policy.BundleDir,
++		"TALON_NATIVE_ARTIFACT_PROFILE=runtime",
+ 		"TALON_NATIVE_PUBLIC_KEY_FILE="+publicKeyPath,
+ 		"TALON_NATIVE_EXPECTED_KEY_ID="+policy.ExpectedKeyID,
+ 		"TALON_NATIVE_EXPECTED_KEY_SHA256="+policy.ExpectedKeySHA256,
+diff --git a/native_manifest.go b/native_manifest.go
+index 352598a..8a17864 100644
+--- a/native_manifest.go
++++ b/native_manifest.go
+@@ -69,24 +69,33 @@ type NativePolicy struct {
+ 	RequiredCapabilities   []string
+ }
+ 
+-// NativeInfo is the signed native identity accepted for the current process.
++// NativeInfo reports the admitted identity; Admission distinguishes signed release
++// trust from explicitly selected, unsigned local development provenance.
+ type NativeInfo struct {
+-	Platform       string
+-	ReleaseTag     string
+-	TalonBinCommit string
+-	CoreRepository string
+-	CoreTag        string
+-	CoreCommit     string
+-	CoreVersion    string
+-	ABIProfile     string
+-	ABIVersion     int
+-	HeaderSHA256   string
+-	LibrarySHA256  string
+-	KeyID          string
+-	KeySHA256      string
+-	Features       []string
+-	Capabilities   []NativeCapability
+-	Gates          map[string]CapabilityGate
++	Admission                 string
++	CoreGitDirty              bool
++	BuildProfile              string
++	BuildProfileSource        string
++	DevelopmentLibraryPath    string
++	DevelopmentHeaderPath     string
++	DevelopmentManifestPath   string
++	DevelopmentManifestSHA256 string
++	Platform                  string
++	ReleaseTag                string
++	TalonBinCommit            string
++	CoreRepository            string
++	CoreTag                   string
++	CoreCommit                string
++	CoreVersion               string
++	ABIProfile                string
++	ABIVersion                int
++	HeaderSHA256              string
++	LibrarySHA256             string
++	KeyID                     string
++	KeySHA256                 string
++	Features                  []string
++	Capabilities              []NativeCapability
++	Gates                     map[string]CapabilityGate
+ }
+ 
+ // NativeCapability is reported by the loaded Core build manifest.
+@@ -111,7 +120,8 @@ type NativeCapabilityLimits struct {
+ 	ReceiptAuthentication     string   `json:"receipt_authentication"`
+ }
+ 
+-// CapabilityGate is copied from the signed feature set.
++// CapabilityGate reports an outer admission gate. Release gates come from the
++// signed manifest; local development keeps release-only gates closed.
+ type CapabilityGate struct {
+ 	Status string `json:"status"`
+ 	Reason string `json:"reason"`
+@@ -267,6 +277,8 @@ func supportedNativeSymbolSet(symbols []string) bool {
+ }
+ 
+ type verifiedNative struct {
++	Development          *LocalDevelopmentPolicy
++	developmentBuild     coreBuildManifest
+ 	Info                 NativeInfo
+ 	Manifest             nativeManifest
+ 	LibraryPath          string
+@@ -472,6 +484,7 @@ func verifyNativeBundle(policy NativePolicy) (_ *verifiedNative, err error) {
+ 		Manifest:             manifest,
+ 		requiredCapabilities: append([]string(nil), policy.RequiredCapabilities...),
+ 		Info: NativeInfo{
++			Admission:      NativeAdmissionRelease,
+ 			Platform:       platform.Name,
+ 			ReleaseTag:     manifest.Release.Tag,
+ 			TalonBinCommit: manifest.Release.TalonBinCommit,
+@@ -819,11 +832,20 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
+ 		return build, fmt.Errorf("strict Core build manifest decode: %w", err)
+ 	}
+ 	external := verified.Manifest
+-	if (build.ManifestVersion != 1 && build.ManifestVersion != 2) || build.CoreSemver != external.Source.CargoVersion || build.GitCommit != external.Source.Commit || build.GitDirty == nil || *build.GitDirty || build.Target != external.Build.Target || build.CargoLockSHA256 != external.Source.CargoLockSHA256 || build.HeaderSHA256 != external.ABI.HeaderSHA256 {
+-		return build, fmt.Errorf("Core source/build identity differs from signed artifact metadata")
+-	}
+-	if build.ABI.Profile != external.ABI.Profile || build.ABI.Version != external.ABI.Version || !sameStringSet(build.ABI.RequiredSymbols, external.ABI.RequiredSymbols) || !supportedNativeSymbolSet(build.ABI.RequiredSymbols) {
+-		return build, fmt.Errorf("Core runtime ABI differs from signed artifact metadata")
++	if verified.Development != nil {
++		if nativeSHA256Hex(data) != verified.Development.BuildManifestSHA256 {
++			return build, fmt.Errorf("Core runtime manifest differs from pinned local development self-manifest")
++		}
++		if err := validateLocalDevelopmentBuild(build, *verified.Development); err != nil {
++			return build, err
++		}
++	} else {
++		if (build.ManifestVersion != 1 && build.ManifestVersion != 2) || build.CoreSemver != external.Source.CargoVersion || build.GitCommit != external.Source.Commit || build.GitDirty == nil || *build.GitDirty || build.Target != external.Build.Target || build.CargoLockSHA256 != external.Source.CargoLockSHA256 || build.HeaderSHA256 != external.ABI.HeaderSHA256 {
++			return build, fmt.Errorf("Core source/build identity differs from signed artifact metadata")
++		}
++		if build.ABI.Profile != external.ABI.Profile || build.ABI.Version != external.ABI.Version || !sameStringSet(build.ABI.RequiredSymbols, external.ABI.RequiredSymbols) || !supportedNativeSymbolSet(build.ABI.RequiredSymbols) {
++			return build, fmt.Errorf("Core runtime ABI differs from signed artifact metadata")
++		}
+ 	}
+ 	seenFeatures := map[string]struct{}{}
+ 	for _, feature := range build.Features {
+diff --git a/native_module.go b/native_module.go
+index 8d30e04..4b40cdd 100644
+--- a/native_module.go
++++ b/native_module.go
+@@ -13,7 +13,7 @@ import (
+ func defaultNativePolicy() (NativePolicy, error) {
+ 	for _, item := range os.Environ() {
+ 		name, _, _ := strings.Cut(item, "=")
+-		if strings.HasPrefix(name, "TALON_NATIVE_") {
++		if strings.HasPrefix(name, "TALON_NATIVE_") && name != "TALON_NATIVE_MODE" {
+ 			return NativePolicyFromEnvironment()
+ 		}
+ 	}
+diff --git a/talon.go b/talon.go
+index 7900d9d..3f81852 100644
+--- a/talon.go
++++ b/talon.go
+@@ -36,6 +36,9 @@ type DB struct {
+ // OpenOptions contains trusted native-runtime configuration.
+ type OpenOptions struct {
+ 	Native NativePolicy
++	// LocalDevelopment explicitly admits a hash-pinned local build without release trust.
++	// It cannot be combined with Native.
++	LocalDevelopment *LocalDevelopmentPolicy
+ }
+ 
+ var (
+@@ -44,8 +47,19 @@ var (
+ )
+ 
+ // Open opens a database using an explicit native environment policy or the
+-// release-pinned signed Go runtime module. Neither path accepts unsigned code.
++// release-pinned signed Go runtime module. Local development requires explicit opt-in.
+ func Open(path string) (*DB, error) {
++	mode := os.Getenv("TALON_NATIVE_MODE")
++	if mode == NativeAdmissionLocalDevelopment {
++		policy, err := LocalDevelopmentPolicyFromEnvironment()
++		if err != nil {
++			return nil, newError(CodeNativeVerification, "open", "local development policy is incomplete", err)
++		}
++		return OpenWithOptions(path, OpenOptions{LocalDevelopment: &policy})
++	}
++	if mode != "" && mode != NativeAdmissionRelease {
++		return nil, newError(CodeNativeVerification, "open", "unknown TALON_NATIVE_MODE", nil)
++	}
+ 	policy, err := defaultNativePolicy()
+ 	if err != nil {
+ 		return nil, newError(CodeNativeVerification, "open", "native trust policy is incomplete", err)
+@@ -53,13 +67,13 @@ func Open(path string) (*DB, error) {
+ 	return OpenWithOptions(path, OpenOptions{Native: policy})
+ }
+ 
+-// OpenWithOptions verifies the signed native bundle before dlopen and before a
++// OpenWithOptions verifies the selected native identity before dlopen and before a
+ // Core database handle is created.
+ func OpenWithOptions(path string, options OpenOptions) (*DB, error) {
+ 	if path == "" || strings.IndexByte(path, 0) >= 0 || !utf8.ValidString(path) {
+ 		return nil, newError(CodeInvalidArgument, "open", "database path is empty, contains NUL, or is not UTF-8", nil)
+ 	}
+-	verified, err := ensureNativeLoaded(options.Native)
++	verified, err := ensureNativeLoadedOptions(options)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -74,16 +88,35 @@ func OpenWithOptions(path string, options OpenOptions) (*DB, error) {
+ }
+ 
+ func ensureNativeLoaded(policy NativePolicy) (*verifiedNative, error) {
++	return ensureNativeLoadedOptions(OpenOptions{Native: policy})
++}
++
++func ensureNativeLoadedOptions(options OpenOptions) (*verifiedNative, error) {
+ 	nativeLoadMu.Lock()
+ 	defer nativeLoadMu.Unlock()
+-	policyHash := hashNativePolicy(policy)
++	policyHash := hashNativePolicy(options.Native)
++	if options.LocalDevelopment != nil {
++		if hashNativePolicy(options.Native) != hashNativePolicy(NativePolicy{}) {
++			return nil, newError(CodeNativeVerification, "load native library", "release and local development policies cannot be combined", nil)
++		}
++		if err := validateLocalDevelopmentPolicy(*options.LocalDevelopment); err != nil {
++			return nil, newError(CodeNativeVerification, "load native library", "invalid local development policy", err)
++		}
++		policyHash = hashLocalDevelopmentPolicy(*options.LocalDevelopment)
++	}
+ 	if loadedNative != nil {
+ 		if loadedNative.policyHash != policyHash {
+ 			return nil, newError(CodeNativeVerification, "load native library", "a different native trust policy is already active in this process", nil)
+ 		}
+ 		return loadedNative, nil
+ 	}
+-	verified, err := verifyNativeBundle(policy)
++	var verified *verifiedNative
++	var err error
++	if options.LocalDevelopment != nil {
++		verified, err = verifyLocalDevelopment(*options.LocalDevelopment)
++	} else {
++		verified, err = verifyNativeBundle(options.Native)
++	}
+ 	if err != nil {
+ 		return nil, newError(CodeNativeVerification, "verify native bundle", "native bundle verification failed", err)
+ 	}
+@@ -101,7 +134,7 @@ func ensureNativeLoaded(policy NativePolicy) (*verifiedNative, error) {
+ 	if err := attestLoadedNative(verified); err != nil {
+ 		C.talon_sdk_unload()
+ 		_ = removeVerifiedNative(verified)
+-		return nil, newError(CodeNativeVerification, "attest loaded native library", "Core runtime identity does not match the signed artifact manifest", err)
++		return nil, newError(CodeNativeVerification, "attest loaded native library", "Core runtime identity does not match the admitted artifact", err)
+ 	}
+ 	loadedNative = verified
+ 	return verified, nil
+@@ -135,7 +168,11 @@ func attestLoadedNative(verified *verifiedNative) error {
+ 	if err := verifyRequiredRuntimeCapabilities(build, verified.requiredCapabilities); err != nil {
+ 		return err
+ 	}
+-	for _, symbol := range verified.Manifest.ABI.RequiredSymbols {
++	symbols := verified.Manifest.ABI.RequiredSymbols
++	if verified.Development != nil {
++		symbols = verified.developmentBuild.ABI.RequiredSymbols
++	}
++	for _, symbol := range symbols {
+ 		name := C.CString(symbol)
+ 		present := C.talon_sdk_has_symbol(name) != 0
+ 		C.free(unsafe.Pointer(name))
+@@ -278,7 +315,7 @@ func decodeNativeLeaderHint(data json.RawMessage) (*NativeLeaderHint, error) {
+ 	return &hint, nil
+ }
+ 
+-// NativeInfo returns the verified signed identity used by this DB.
++// NativeInfo returns the admitted identity and provenance used by this DB.
+ func (db *DB) NativeInfo() NativeInfo {
+ 	info := db.nativeInfo
+ 	info.Features = append([]string(nil), db.nativeInfo.Features...)

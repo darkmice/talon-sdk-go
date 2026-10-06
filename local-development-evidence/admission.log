@@ -1,0 +1,5 @@
+=== RUN   TestLocalDevelopmentRealAdmission
+    native_development_test.go:215: admission=local-development dirty=true declared_profile=debug source=caller-declared (not attested by Core ABI) core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=53181b0a784fe50e081b5929bc66a227ee2c2c7027ce1b5342a6fad91832611b self_manifest_sha256=9559f8eb8d99042f5795a579160b5c1958f3c2ce7ecf2f81bc9c28841d5423e9
+--- PASS: TestLocalDevelopmentRealAdmission (2.96s)
+PASS
+ok  	github.com/darkmice/talon-sdk-go	3.528s

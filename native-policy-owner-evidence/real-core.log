@@ -1,0 +1,10 @@
+=== RUN   TestLocalPolicyOwnerRealCore
+    native_development_owner_live_test.go:126: owner acceptance provenance=unsigned-local-development library_sha256=5c72bd38a38a4baee2115c02ca50cfecd14505282fc8f26d668b2c9c9a21ffec core_commit=6010d748aebd3c4e595534ed4a9e959e7e5334cf abi=talon-native-c@1 static+original-loader+relocated-loader+handle-binding=passed
+--- PASS: TestLocalPolicyOwnerRealCore (4.03s)
+PASS
+ok  	github.com/darkmice/talon-sdk-go	4.347s
+=== RUN   TestNativeIdentityRealConnectionDuringTransaction
+    native_identity_live_test.go:103: same-connection native identity library_sha256=5c72bd38a38a4baee2115c02ca50cfecd14505282fc8f26d668b2c9c9a21ffec abi=talon-native-c@1 mismatch-rejected+tx-read+rollback+commit+single-handle=passed
+--- PASS: TestNativeIdentityRealConnectionDuringTransaction (1.62s)
+PASS
+ok  	github.com/darkmice/talon-sdk-go/goframe	2.061s

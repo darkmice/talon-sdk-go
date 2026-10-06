@@ -69,24 +69,33 @@ type NativePolicy struct {
 	RequiredCapabilities   []string
 }
 
-// NativeInfo is the signed native identity accepted for the current process.
+// NativeInfo reports the admitted identity; Admission distinguishes signed release
+// trust from explicitly selected, unsigned local development provenance.
 type NativeInfo struct {
-	Platform       string
-	ReleaseTag     string
-	TalonBinCommit string
-	CoreRepository string
-	CoreTag        string
-	CoreCommit     string
-	CoreVersion    string
-	ABIProfile     string
-	ABIVersion     int
-	HeaderSHA256   string
-	LibrarySHA256  string
-	KeyID          string
-	KeySHA256      string
-	Features       []string
-	Capabilities   []NativeCapability
-	Gates          map[string]CapabilityGate
+	Admission                 string
+	CoreGitDirty              bool
+	BuildProfile              string
+	BuildProfileSource        string
+	DevelopmentLibraryPath    string
+	DevelopmentHeaderPath     string
+	DevelopmentManifestPath   string
+	DevelopmentManifestSHA256 string
+	Platform                  string
+	ReleaseTag                string
+	TalonBinCommit            string
+	CoreRepository            string
+	CoreTag                   string
+	CoreCommit                string
+	CoreVersion               string
+	ABIProfile                string
+	ABIVersion                int
+	HeaderSHA256              string
+	LibrarySHA256             string
+	KeyID                     string
+	KeySHA256                 string
+	Features                  []string
+	Capabilities              []NativeCapability
+	Gates                     map[string]CapabilityGate
 }
 
 // NativeCapability is reported by the loaded Core build manifest.
@@ -111,7 +120,8 @@ type NativeCapabilityLimits struct {
 	ReceiptAuthentication     string   `json:"receipt_authentication"`
 }
 
-// CapabilityGate is copied from the signed feature set.
+// CapabilityGate reports an outer admission gate. Release gates come from the
+// signed manifest; local development keeps release-only gates closed.
 type CapabilityGate struct {
 	Status string `json:"status"`
 	Reason string `json:"reason"`
@@ -267,6 +277,8 @@ func supportedNativeSymbolSet(symbols []string) bool {
 }
 
 type verifiedNative struct {
+	Development          *LocalDevelopmentPolicy
+	developmentBuild     coreBuildManifest
 	Info                 NativeInfo
 	Manifest             nativeManifest
 	LibraryPath          string
@@ -472,6 +484,7 @@ func verifyNativeBundle(policy NativePolicy) (_ *verifiedNative, err error) {
 		Manifest:             manifest,
 		requiredCapabilities: append([]string(nil), policy.RequiredCapabilities...),
 		Info: NativeInfo{
+			Admission:      NativeAdmissionRelease,
 			Platform:       platform.Name,
 			ReleaseTag:     manifest.Release.Tag,
 			TalonBinCommit: manifest.Release.TalonBinCommit,
@@ -819,11 +832,20 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 		return build, fmt.Errorf("strict Core build manifest decode: %w", err)
 	}
 	external := verified.Manifest
-	if (build.ManifestVersion != 1 && build.ManifestVersion != 2) || build.CoreSemver != external.Source.CargoVersion || build.GitCommit != external.Source.Commit || build.GitDirty == nil || *build.GitDirty || build.Target != external.Build.Target || build.CargoLockSHA256 != external.Source.CargoLockSHA256 || build.HeaderSHA256 != external.ABI.HeaderSHA256 {
-		return build, fmt.Errorf("Core source/build identity differs from signed artifact metadata")
-	}
-	if build.ABI.Profile != external.ABI.Profile || build.ABI.Version != external.ABI.Version || !sameStringSet(build.ABI.RequiredSymbols, external.ABI.RequiredSymbols) || !supportedNativeSymbolSet(build.ABI.RequiredSymbols) {
-		return build, fmt.Errorf("Core runtime ABI differs from signed artifact metadata")
+	if verified.Development != nil {
+		if nativeSHA256Hex(data) != verified.Development.BuildManifestSHA256 {
+			return build, fmt.Errorf("Core runtime manifest differs from pinned local development self-manifest")
+		}
+		if err := validateLocalDevelopmentBuild(build, *verified.Development); err != nil {
+			return build, err
+		}
+	} else {
+		if (build.ManifestVersion != 1 && build.ManifestVersion != 2) || build.CoreSemver != external.Source.CargoVersion || build.GitCommit != external.Source.Commit || build.GitDirty == nil || *build.GitDirty || build.Target != external.Build.Target || build.CargoLockSHA256 != external.Source.CargoLockSHA256 || build.HeaderSHA256 != external.ABI.HeaderSHA256 {
+			return build, fmt.Errorf("Core source/build identity differs from signed artifact metadata")
+		}
+		if build.ABI.Profile != external.ABI.Profile || build.ABI.Version != external.ABI.Version || !sameStringSet(build.ABI.RequiredSymbols, external.ABI.RequiredSymbols) || !supportedNativeSymbolSet(build.ABI.RequiredSymbols) {
+			return build, fmt.Errorf("Core runtime ABI differs from signed artifact metadata")
+		}
 	}
 	seenFeatures := map[string]struct{}{}
 	for _, feature := range build.Features {

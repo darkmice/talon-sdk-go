@@ -1,0 +1,4 @@
+ok  	github.com/darkmice/talon-sdk-go	1.366s
+ok  	github.com/darkmice/talon-sdk-go/goframe	0.944s
+ok  	github.com/darkmice/talon-sdk-go/internal/serverprotocol	(cached)
+ok  	github.com/darkmice/talon-sdk-go/server	(cached)

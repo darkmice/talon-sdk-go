@@ -1,0 +1,1 @@
+consumer native admission=local-development dirty=true profile=debug core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=53181b0a784fe50e081b5929bc66a227ee2c2c7027ce1b5342a6fad91832611b indexed_tx_rows=1

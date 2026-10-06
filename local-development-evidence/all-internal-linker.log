@@ -1,0 +1,12 @@
+?   	github.com/darkmice/talon-sdk-go/cmd/talon-native-dev	[no test files]
+ok  	github.com/darkmice/talon-sdk-go	1.035s
+ok  	github.com/darkmice/talon-sdk-go/goframe	1.490s
+dyld[49239]: missing LC_UUID load command in /private/var/folders/p6/qld_kgsd01b0g7b512b045qr0000gn/T/go-build1149058527/b309/serverprotocol.test
+dyld[49239]: missing LC_UUID load command
+signal: abort trap
+FAIL	github.com/darkmice/talon-sdk-go/internal/serverprotocol	1.215s
+dyld[49237]: missing LC_UUID load command in /private/var/folders/p6/qld_kgsd01b0g7b512b045qr0000gn/T/go-build1149058527/b311/server.test
+dyld[49237]: missing LC_UUID load command
+signal: abort trap
+FAIL	github.com/darkmice/talon-sdk-go/server	0.542s
+FAIL

@@ -28,14 +28,18 @@ import (
 
 // DB 是 Talon 数据库客户端（嵌入式模式）。
 type DB struct {
-	mu         sync.RWMutex
-	handle     *C.TalonSDKHandle
-	nativeInfo NativeInfo
+	mu               sync.RWMutex
+	handle           *C.TalonSDKHandle
+	nativeInfo       NativeInfo
+	nativePolicyHash [32]byte
 }
 
 // OpenOptions contains trusted native-runtime configuration.
 type OpenOptions struct {
 	Native NativePolicy
+	// LocalDevelopment explicitly admits a hash-pinned local build without release trust.
+	// It cannot be combined with Native.
+	LocalDevelopment *LocalDevelopmentPolicy
 }
 
 var (
@@ -44,8 +48,19 @@ var (
 )
 
 // Open opens a database using an explicit native environment policy or the
-// release-pinned signed Go runtime module. Neither path accepts unsigned code.
+// release-pinned signed Go runtime module. Local development requires explicit opt-in.
 func Open(path string) (*DB, error) {
+	mode := os.Getenv("TALON_NATIVE_MODE")
+	if mode == NativeAdmissionLocalDevelopment {
+		policy, err := LocalDevelopmentPolicyFromEnvironment()
+		if err != nil {
+			return nil, newError(CodeNativeVerification, "open", "local development policy is incomplete", err)
+		}
+		return OpenWithOptions(path, OpenOptions{LocalDevelopment: &policy})
+	}
+	if mode != "" && mode != NativeAdmissionRelease {
+		return nil, newError(CodeNativeVerification, "open", "unknown TALON_NATIVE_MODE", nil)
+	}
 	policy, err := defaultNativePolicy()
 	if err != nil {
 		return nil, newError(CodeNativeVerification, "open", "native trust policy is incomplete", err)
@@ -53,13 +68,13 @@ func Open(path string) (*DB, error) {
 	return OpenWithOptions(path, OpenOptions{Native: policy})
 }
 
-// OpenWithOptions verifies the signed native bundle before dlopen and before a
+// OpenWithOptions verifies the selected native identity before dlopen and before a
 // Core database handle is created.
 func OpenWithOptions(path string, options OpenOptions) (*DB, error) {
 	if path == "" || strings.IndexByte(path, 0) >= 0 || !utf8.ValidString(path) {
 		return nil, newError(CodeInvalidArgument, "open", "database path is empty, contains NUL, or is not UTF-8", nil)
 	}
-	verified, err := ensureNativeLoaded(options.Native)
+	verified, err := ensureNativeLoadedOptions(options)
 	if err != nil {
 		return nil, err
 	}
@@ -70,41 +85,68 @@ func OpenWithOptions(path string, options OpenOptions) (*DB, error) {
 	if h == nil {
 		return nil, nativeFailure("open", fmt.Sprintf("failed to open database at %s", path), C.GoString(&errorCode[0]))
 	}
-	return &DB{handle: h, nativeInfo: verified.Info}, nil
+	return &DB{handle: h, nativeInfo: verified.Info, nativePolicyHash: verified.policyHash}, nil
 }
 
 func ensureNativeLoaded(policy NativePolicy) (*verifiedNative, error) {
+	return ensureNativeLoadedOptions(OpenOptions{Native: policy})
+}
+
+func ensureNativeLoadedOptions(options OpenOptions) (*verifiedNative, error) {
 	nativeLoadMu.Lock()
 	defer nativeLoadMu.Unlock()
-	policyHash := hashNativePolicy(policy)
+	policyHash := hashNativePolicy(options.Native)
+	if options.LocalDevelopment != nil {
+		if hashNativePolicy(options.Native) != hashNativePolicy(NativePolicy{}) {
+			return nil, newError(CodeNativeVerification, "load native library", "release and local development policies cannot be combined", nil)
+		}
+		if err := validateLocalDevelopmentPolicy(*options.LocalDevelopment); err != nil {
+			return nil, newError(CodeNativeVerification, "load native library", "invalid local development policy", err)
+		}
+		policyHash = hashLocalDevelopmentPolicy(*options.LocalDevelopment)
+	}
 	if loadedNative != nil {
 		if loadedNative.policyHash != policyHash {
 			return nil, newError(CodeNativeVerification, "load native library", "a different native trust policy is already active in this process", nil)
 		}
 		return loadedNative, nil
 	}
-	verified, err := verifyNativeBundle(policy)
+	var verified *verifiedNative
+	var err error
+	if options.LocalDevelopment != nil {
+		verified, err = verifyLocalDevelopment(*options.LocalDevelopment)
+	} else {
+		verified, err = verifyNativeBundle(options.Native)
+	}
 	if err != nil {
 		return nil, newError(CodeNativeVerification, "verify native bundle", "native bundle verification failed", err)
 	}
+	if err := loadAndAttestNative(verified); err != nil {
+		_ = removeVerifiedNative(verified)
+		return nil, err
+	}
+	loadedNative = verified
+	return verified, nil
+}
+
+// Caller holds nativeLoadMu. The loader and runtime owner are shared by DB
+// admission and the explicit no-DB probe; neither path weakens Core attestation.
+func loadAndAttestNative(verified *verifiedNative) error {
 	libraryPath := C.CString(verified.LibraryPath)
 	rc := C.talon_sdk_load(libraryPath)
 	C.free(unsafe.Pointer(libraryPath))
 	if rc != 0 {
-		message := "dynamic loader rejected the verified native library"
+		var cause error
 		if diagnostic := C.talon_sdk_loader_error(); diagnostic != nil {
-			message += ": " + C.GoString(diagnostic)
+			cause = fmt.Errorf("%s", C.GoString(diagnostic))
 		}
-		_ = removeVerifiedNative(verified)
-		return nil, newError(CodeNativeLoad, "load native library", message, nil)
+		return newError(CodeNativeLoad, "load native library", "dynamic loader rejected the verified native library", cause)
 	}
 	if err := attestLoadedNative(verified); err != nil {
 		C.talon_sdk_unload()
-		_ = removeVerifiedNative(verified)
-		return nil, newError(CodeNativeVerification, "attest loaded native library", "Core runtime identity does not match the signed artifact manifest", err)
+		return newError(CodeNativeVerification, "attest loaded native library", "Core runtime identity does not match the admitted artifact", err)
 	}
-	loadedNative = verified
-	return verified, nil
+	return nil
 }
 
 func removeVerifiedNative(verified *verifiedNative) error {
@@ -135,7 +177,11 @@ func attestLoadedNative(verified *verifiedNative) error {
 	if err := verifyRequiredRuntimeCapabilities(build, verified.requiredCapabilities); err != nil {
 		return err
 	}
-	for _, symbol := range verified.Manifest.ABI.RequiredSymbols {
+	symbols := verified.Manifest.ABI.RequiredSymbols
+	if verified.Development != nil {
+		symbols = verified.developmentBuild.ABI.RequiredSymbols
+	}
+	for _, symbol := range symbols {
 		name := C.CString(symbol)
 		present := C.talon_sdk_has_symbol(name) != 0
 		C.free(unsafe.Pointer(name))
@@ -278,7 +324,7 @@ func decodeNativeLeaderHint(data json.RawMessage) (*NativeLeaderHint, error) {
 	return &hint, nil
 }
 
-// NativeInfo returns the verified signed identity used by this DB.
+// NativeInfo returns the admitted identity and provenance used by this DB.
 func (db *DB) NativeInfo() NativeInfo {
 	info := db.nativeInfo
 	info.Features = append([]string(nil), db.nativeInfo.Features...)
@@ -288,6 +334,37 @@ func (db *DB) NativeInfo() NativeInfo {
 		info.Gates[name] = gate
 	}
 	return info
+}
+
+// CheckedNativeInfo observes this open handle's actual admitted runtime identity.
+// It does not execute SQL, acquire a second native handle, or change TX ownership.
+func (db *DB) CheckedNativeInfo() (NativeInfo, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == nil {
+		return NativeInfo{}, newError(CodeDatabaseClosed, "native identity", "database is closed", nil)
+	}
+	return db.NativeInfo(), nil
+}
+
+// VerifyLocalDevelopmentPolicy binds an externally pinned, statically verified
+// policy to this same open handle's loader-attested identity. It also compares
+// the policy's locators, declared profile and exact required capabilities with
+// the policy admitted at Open. A matching file pin alone cannot pass this gate.
+func (db *DB) VerifyLocalDevelopmentPolicy(data []byte, expectedSHA256 string) (NativeInfo, error) {
+	verification, err := VerifyLocalDevelopmentPolicy(data, expectedSHA256)
+	if err != nil {
+		return NativeInfo{}, err
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.handle == nil {
+		return NativeInfo{}, newError(CodeDatabaseClosed, "verify native identity", "database is closed", nil)
+	}
+	if db.nativeInfo.Admission != NativeAdmissionLocalDevelopment || db.nativePolicyHash != hashLocalDevelopmentPolicy(verification.Policy) {
+		return NativeInfo{}, newError(CodeNativeVerification, "verify native identity", "policy differs from this handle's admitted local runtime", fmt.Errorf("loaded policy identity mismatch"))
+	}
+	return db.NativeInfo(), nil
 }
 
 func cloneNativeCapabilities(capabilities []NativeCapability) []NativeCapability {
