@@ -1,0 +1,28 @@
+=== RUN   TestLocalDevelopmentCommitKillRestart
+=== RUN   TestLocalDevelopmentCommitKillRestart/binary
+    local_development_live_test.go:34: write: === RUN   TestLocalDevelopmentKillRestartChild
+            local_development_live_test.go:57: route=binary release= core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=53181b0a784fe50e081b5929bc66a227ee2c2c7027ce1b5342a6fad91832611b platform=macos-arm64
+            local_development_live_test.go:79: SIGKILL unexpectedly returned
+        --- FAIL: TestLocalDevelopmentKillRestartChild (1.31s)
+    local_development_live_test.go:34: read: === RUN   TestLocalDevelopmentKillRestartChild
+            local_development_live_test.go:57: route=binary release= core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=53181b0a784fe50e081b5929bc66a227ee2c2c7027ce1b5342a6fad91832611b platform=macos-arm64
+        --- PASS: TestLocalDevelopmentKillRestartChild (0.71s)
+        PASS
+=== RUN   TestLocalDevelopmentCommitKillRestart/result_v2
+    local_development_live_test.go:34: write: === RUN   TestLocalDevelopmentKillRestartChild
+            local_development_live_test.go:57: route=result_v2 release= core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=53181b0a784fe50e081b5929bc66a227ee2c2c7027ce1b5342a6fad91832611b platform=macos-arm64
+    local_development_live_test.go:34: read: === RUN   TestLocalDevelopmentKillRestartChild
+            local_development_live_test.go:57: route=result_v2 release= core=6010d748aebd3c4e595534ed4a9e959e7e5334cf library_sha256=53181b0a784fe50e081b5929bc66a227ee2c2c7027ce1b5342a6fad91832611b platform=macos-arm64
+        --- PASS: TestLocalDevelopmentKillRestartChild (0.70s)
+        PASS
+=== RUN   TestLocalDevelopmentCommitKillRestart/goframe
+    local_development_live_test.go:34: write: === RUN   TestLocalDevelopmentKillRestartChild
+    local_development_live_test.go:34: read: === RUN   TestLocalDevelopmentKillRestartChild
+        --- PASS: TestLocalDevelopmentKillRestartChild (0.78s)
+        PASS
+--- PASS: TestLocalDevelopmentCommitKillRestart (6.18s)
+    --- PASS: TestLocalDevelopmentCommitKillRestart/binary (2.06s)
+    --- PASS: TestLocalDevelopmentCommitKillRestart/result_v2 (1.96s)
+    --- PASS: TestLocalDevelopmentCommitKillRestart/goframe (2.16s)
+PASS
+ok  	github.com/darkmice/talon-sdk-go/goframe	6.774s

@@ -19,11 +19,13 @@ type fakeNative struct {
 	execCalls  []string
 	result     talon.SQLResult
 	capability error
+	execError  error
+	queryError error
 }
 
 func (f *fakeNative) QueryResult(sql string, _ ...talon.Value) (talon.SQLResult, error) {
 	f.queryCalls = append(f.queryCalls, sql)
-	return f.result, nil
+	return f.result, f.queryError
 }
 
 func TestNativeInsertIdRequiresIntegerSinglePrimaryKey(t *testing.T) {
@@ -71,7 +73,7 @@ func TestGoFrameInsertVariantsUseTalonNativeSyntax(t *testing.T) {
 }
 func (f *fakeNative) Exec(sql string, _ ...talon.Value) error {
 	f.execCalls = append(f.execCalls, sql)
-	return nil
+	return f.execError
 }
 func (*fakeNative) Close()                           {}
 func (f *fakeNative) RequireCapability(string) error { return f.capability }
@@ -215,5 +217,72 @@ func TestNativeSaveUsesTalonConflictSyntax(t *testing.T) {
 	}
 	if statement != "ON CONFLICT (`id`) DO UPDATE SET `name`=EXCLUDED.`name`" {
 		t.Fatalf("upsert=%q", statement)
+	}
+}
+
+func TestNativeTransactionErrorContract(t *testing.T) {
+	cause := errors.New("capability evidence")
+	capability := &talon.TalonError{Code: talon.CodeCapabilityUnavailable, Cause: cause}
+	fake := &fakeNative{capability: capability}
+	conn := &nativeConn{db: fake}
+	_, err := conn.Begin()
+	var typed *talon.TalonError
+	if !errors.Is(err, ErrTransactionsUnavailable) || !errors.Is(err, cause) || !errors.As(err, &typed) || talon.ErrorCodeOf(err) != talon.CodeCapabilityUnavailable {
+		t.Fatalf("capability error chain lost: %v", err)
+	}
+	if len(fake.execCalls) != 0 {
+		t.Fatal("BEGIN sent despite missing capability")
+	}
+	busy := &talon.TalonError{Code: talon.CodeNativeUnclassified, NativeCode: "busy", Cause: cause}
+	fake.capability, fake.execError = nil, busy
+	if _, err := conn.Begin(); err != busy || talon.NativeCodeOf(err) != "busy" || talon.ErrorCodeOf(err) == talon.CodeResultIndeterminate {
+		t.Fatalf("BEGIN refusal changed classification: %v", err)
+	}
+	fake.execError = nil
+	tx, err := conn.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	uncertain := &talon.TalonError{Code: talon.CodeResultIndeterminate, NativeCode: "uncertain", Cause: cause}
+	fake.execError = uncertain
+	if err := tx.Commit(); err != uncertain || !errors.Is(err, cause) || talon.NativeCodeOf(err) != "uncertain" {
+		t.Fatalf("COMMIT lost uncertainty: %v", err)
+	}
+	protocol := &talon.TalonError{Code: talon.CodeProtocolViolation, Cause: cause}
+	fake.execError = protocol
+	err = tx.Commit()
+	if talon.ErrorCodeOf(err) != talon.CodeResultIndeterminate || !errors.Is(err, protocol) || !errors.Is(err, cause) {
+		t.Fatalf("malformed COMMIT response must retain cause and signal uncertainty: %v", err)
+	}
+	fake.execError = busy
+	if err := tx.Commit(); err != busy {
+		t.Fatalf("explicit Core refusal was reclassified: %v", err)
+	}
+	if len(fake.execCalls) != 5 {
+		t.Fatalf("unexpected retry or cleanup call: %v", fake.execCalls)
+	}
+}
+
+func TestNativeMutationResultCannotProveOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		result     talon.SQLResult
+		queryError error
+	}{
+		{name: "missing metadata"},
+		{name: "overflow metadata", result: func() talon.SQLResult { n := uint64(1) << 63; return talon.SQLResult{AffectedRows: &n} }()},
+		{name: "malformed response", queryError: &talon.TalonError{Code: talon.CodeProtocolViolation}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeNative{result: tc.result, queryError: tc.queryError}
+			conn := &nativeConn{db: fake}
+			result, err := conn.ExecContext(context.Background(), "INSERT INTO items VALUES (?)", []driver.NamedValue{{Ordinal: 1, Value: 1}})
+			if result != nil || talon.ErrorCodeOf(err) != talon.CodeResultIndeterminate || !errors.Is(err, &talon.TalonError{Code: talon.CodeProtocolViolation}) {
+				t.Fatalf("mutation result=%v error=%v", result, err)
+			}
+			if len(fake.queryCalls) != 1 {
+				t.Fatalf("mutation retried: %v", fake.queryCalls)
+			}
+		})
 	}
 }

@@ -1,0 +1,13 @@
+{
+	"Path": "github.com/darkmice/talon-sdk-go",
+	"Version": "v0.7.5",
+	"Replace": {
+		"Path": "../..",
+		"Dir": "/Users/dark/.codex/worktrees/native-local-development/talon-sdk-go",
+		"GoMod": "/Users/dark/.codex/worktrees/native-local-development/talon-sdk-go/go.mod",
+		"GoVersion": "1.21"
+	},
+	"Dir": "/Users/dark/.codex/worktrees/native-local-development/talon-sdk-go",
+	"GoMod": "/Users/dark/.codex/worktrees/native-local-development/talon-sdk-go/go.mod",
+	"GoVersion": "1.21"
+}

@@ -155,7 +155,7 @@ band before supplying it. Until such an artifact exists, the correct state is
 Production native code is not selected from a tag, `latest` URL, linker search
 path, or the historical headers/libraries under `include/` and `lib/`. Those
 files are retained only for source compatibility and are not trust roots or
-runtime fallbacks. `Open` requires an out-of-band trust policy and a
+runtime fallbacks. The default release mode of `Open` requires an out-of-band trust policy and a
 `talon-native-manifest-v1` offline bundle. It verifies, in order:
 
 - strict manifest JSON (duplicate and unknown fields are rejected);
@@ -180,7 +180,8 @@ platforms fail closed before bundle access.
 ## Open
 
 Applications may pass a `NativePolicy` directly with `OpenWithOptions`.
-`Open` first checks whether any `TALON_NATIVE_*` environment variable is set;
+Except for the explicit local development mode below, `Open` checks whether any
+release `TALON_NATIVE_*` environment variable is set;
 if so, it reads the complete explicit policy below and fails on a partial one.
 Otherwise it selects the version-pinned `talon-bin/go-runtime` module. That
 module is pinned to the signed `v0.1.54` release and embeds the native runtime
@@ -233,6 +234,46 @@ if err != nil {
 }
 defer db.Close()
 ```
+
+### Explicit local development native admission
+
+Already-built dirty/debug Core libraries can be used without a Core/SDK release:
+
+```sh
+CGO_ENABLED=1 GOWORK=off go run ./cmd/talon-native-dev prepare \
+  --library /absolute/path/libtalon.dylib \
+  --header /absolute/path/talon.h \
+  --build-profile debug --out /absolute/path/new-config
+source /absolute/path/new-config/env.sh
+```
+
+`prepare` executes the selected local native code, extracts its actual
+`talon_build_manifest` ABI output, and creates a new exclusive directory. It does
+not sign an artifact or invent release identity. The CLI defaults to requiring
+`native_sql_result@2,native_sql_session@1,native_shared_core@1`; `--require` accepts
+comma-separated `name@version` capabilities with available status and matching
+features. SDK operation gates and the release-only conditional-batch gate remain
+enforced. The default release path still rejects dirty source and unsigned bundles.
+
+`env.sh` contains exactly `TALON_NATIVE_MODE=local-development`,
+`TALON_NATIVE_DEV_POLICY_FILE` (absolute path), and
+`TALON_NATIVE_DEV_POLICY_SHA256`. The pinned policy fixes canonical absolute
+library, header, self-manifest paths and SHA256 values. Loading verifies the
+selected bytes, copies the library into a private directory, checks the exact
+runtime self-manifest SHA256, ABI/symbols, target, build binding and capabilities.
+Mixed development/release environment fields fail closed. Unknown modes or
+partial development policies never silently select another runtime.
+
+Alternatively pass `OpenOptions{LocalDevelopment: &policy}` directly. It cannot
+be combined with `Native`. `NativeInfo().Admission` is `local-development`,
+`CoreGitDirty` comes from the real self-manifest, and release tag/signing-key
+fields are empty. `BuildProfile` is **caller-declared**, explicitly labeled by
+`BuildProfileSource`: the current Core ABI does not attest debug/release profile.
+One process admits one policy; rebuild, prepare a new config and restart to change
+the loaded runtime. Production callers should keep release mode and release policy.
+
+See [the local development handoff](LOCAL_DEVELOPMENT_HANDOFF.zh-CN.md) for the
+verified artifact, source path, temporary consumer modfile and test commands.
 
 ## Parameterized SQL and exact values
 

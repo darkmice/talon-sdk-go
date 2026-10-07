@@ -1,0 +1,10 @@
+{
+  "changed_existing_files": [
+    "native_development.go",
+    "native_development_cgo.go",
+    "talon.go"
+  ],
+  "missing_existing_files": [],
+  "preserved_existing_count": 147,
+  "baseline_file_count": 150
+}

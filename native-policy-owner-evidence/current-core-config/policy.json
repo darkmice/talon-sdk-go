@@ -1,0 +1,17 @@
+{
+  "contract": "talon-native-local-development-v1",
+  "library_path": "/Users/dark/.codex/worktrees/unique-index-tx-overlay/superclaw-db/target/unique-index-tx-evidence-20261006/libtalon.dylib",
+  "library_sha256": "5c72bd38a38a4baee2115c02ca50cfecd14505282fc8f26d668b2c9c9a21ffec",
+  "header_path": "/Users/dark/.codex/worktrees/unique-index-tx-overlay/superclaw-db/include/talon.h",
+  "header_sha256": "455eb8ed49b8d112134e766f0c6a5cbfd0f76bf9285bebcaaae2616b3d1eebe9",
+  "build_manifest_path": "/Users/dark/.codex/worktrees/native-local-development/talon-sdk-go/native-policy-owner-evidence/current-core-config/core-build-manifest.json",
+  "build_manifest_sha256": "9559f8eb8d99042f5795a579160b5c1958f3c2ce7ecf2f81bc9c28841d5423e9",
+  "expected_abi_profile": "talon-native-c",
+  "expected_abi_version": 1,
+  "build_profile": "debug",
+  "required_capabilities": [
+    "native_sql_result@2",
+    "native_sql_session@1",
+    "native_shared_core@1"
+  ]
+}

@@ -13,7 +13,7 @@ import (
 func defaultNativePolicy() (NativePolicy, error) {
 	for _, item := range os.Environ() {
 		name, _, _ := strings.Cut(item, "=")
-		if strings.HasPrefix(name, "TALON_NATIVE_") {
+		if strings.HasPrefix(name, "TALON_NATIVE_") && name != "TALON_NATIVE_MODE" {
 			return NativePolicyFromEnvironment()
 		}
 	}

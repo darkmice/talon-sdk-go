@@ -1,0 +1,6 @@
+?   	github.com/darkmice/talon-sdk-go/cmd/talon-native-dev	[no test files]
+?   	github.com/darkmice/talon-sdk-go/cmd/talon-native-policy	[no test files]
+ok  	github.com/darkmice/talon-sdk-go	2.272s
+ok  	github.com/darkmice/talon-sdk-go/goframe	0.505s
+ok  	github.com/darkmice/talon-sdk-go/internal/serverprotocol	8.594s
+ok  	github.com/darkmice/talon-sdk-go/server	0.934s
