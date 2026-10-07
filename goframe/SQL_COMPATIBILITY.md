@@ -100,3 +100,26 @@ Core hashes selected source values without allocating projected duplicate
 rows, but this local test does not measure end-to-end throughput.
 The local SQL latency and allocation snapshot is in
 [SQL_PERFORMANCE.md](SQL_PERFORMANCE.md).
+
+## Native context contract
+
+The adapter forwards context through BEGIN, query, mutation and COMMIT. ROLLBACK
+uses the transaction context and dispatches mandatory cleanup even after expiry.
+A terminal error synchronously closes the native session and `driver.Validator`
+causes the pool to discard it; `driver.ErrBadConn` is not used for these errors
+because it can trigger mutation replay. `CodeResultIndeterminate` remains the
+primary outcome and keeps cancellation/durability/protocol causes reachable.
+
+Cancellable calls require Core capability `native_sql_context@1`, feature
+`native_sql_context_v1` and all four versioned ABI symbols. The currently pinned
+signed runtime does not grant this capability. An old runtime still accepts
+non-cancellable calls; bounded calls return `CodeCapabilityUnavailable` before
+SQL dispatch. Consumer SDK/runtime upgrades must be explicit and independently
+verified. `Connect(ctx)` observes context before and after synchronous Open, but
+native opening/admission itself remains without a hard cancellation bound.
+
+This is cooperative cancellation, not an unconditional five-second completion
+guarantee. Filesystem/fsync and rollback/session cleanup must finish before owner
+release. GoFrame and database/sql transaction cancellation were exercised on the
+real embedded path; see `../NATIVE_SQL_CONTEXT_HANDOFF.zh-CN.md` for artifact pins,
+commands and the distinction from SaaS/release/production acceptance.

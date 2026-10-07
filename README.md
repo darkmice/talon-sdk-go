@@ -687,3 +687,14 @@ General conditional KV transactions are intentionally not emulated in this
 SDK. `KvSetNX` retains its existing single-key semantics; it is not a substitute
 for multi-key compare-and-swap. Consumers that need conditional transactions
 must wait for a clean pinned Core revision and complete native matrix.
+
+### Native SQL context
+
+`QueryResultContext`, `ExecContext` and `SQLRollbackContext` use the request-scoped
+`native_sql_context@1` ABI when available. Cancellable contexts fail closed on
+older Core artifacts; contexts with no `Done` channel retain the existing SQL
+path. Cancellation is cooperative: the SDK waits for native completion and
+cleanup, keeps commit uncertainty and its cause, and never detaches a query.
+Native open, filesystem I/O, fsync and intervals without checkpoints have no
+hard wall-clock bound. See [the context handoff](NATIVE_SQL_CONTEXT_HANDOFF.zh-CN.md)
+for capability migration, exact local artifacts and native validation evidence.

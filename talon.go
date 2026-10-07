@@ -277,6 +277,10 @@ func (db *DB) execute(module, action string, params interface{}) (json.RawMessag
 	if err != nil {
 		return nil, newError(CodeProtocolViolation, "execute", "native JSON response exceeds the SDK bound or is unterminated", err)
 	}
+	return decodeCommandResult(outBytes, module, action)
+}
+
+func decodeCommandResult(outBytes []byte, module, action string) (json.RawMessage, error) {
 	var result cmdResult
 	if err := decodeStrictJSON(outBytes, &result); err != nil {
 		return nil, newError(CodeProtocolViolation, "execute", "invalid native JSON response", err)
@@ -433,6 +437,9 @@ func (db *DB) RequireCapability(name string) error {
 		return newError(CodeCapabilityUnavailable, "require capability", fmt.Sprintf("%s is %s%s", name, coreCapability.Status, reason), nil)
 	}
 	if name == "native_conditional_transaction_v2" && containsString(db.nativeInfo.Features, name) && containsString(db.nativeInfo.Features, "conditional_transaction_command_digest_v1") {
+		return nil
+	}
+	if name == "native_sql_context" && coreCapability.Version == 1 && containsString(db.nativeInfo.Features, "native_sql_context_v1") {
 		return nil
 	}
 	if name == "native_sql_session" && coreCapability.Version == 1 && containsString(db.nativeInfo.Features, "native_sql_session_v1") {

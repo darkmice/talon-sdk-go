@@ -265,15 +265,27 @@ var sdkRequiredSymbols = []string{
 	"talon_execute",
 }
 
-// Core's native KV read v1 adds one symbol to the original signed ABI set.
-// Both complete, exact sets are accepted so existing trusted bundles remain
-// loadable while newer bundles can be admitted independently by capability.
+// Optional ABI groups are admitted only as complete, exact symbol sets.
+// Existing signed bundles remain loadable; context calls have their own gate.
+var sqlContextSymbols = []string{
+	"talon_sql_context_new_v1", "talon_sql_context_cancel_v1",
+	"talon_sql_context_free_v1", "talon_exec_sql_context_v1",
+}
+
 func supportedNativeSymbolSet(symbols []string) bool {
 	if sameStringSet(symbols, sdkRequiredSymbols) {
 		return true
 	}
 	withKVRead := append(append([]string(nil), sdkRequiredSymbols...), "talon_kv_read_v1")
-	return sameStringSet(symbols, withKVRead)
+	if sameStringSet(symbols, withKVRead) {
+		return true
+	}
+	for _, base := range [][]string{sdkRequiredSymbols, withKVRead} {
+		if sameStringSet(symbols, append(append([]string(nil), base...), sqlContextSymbols...)) {
+			return true
+		}
+	}
+	return false
 }
 
 type verifiedNative struct {
@@ -523,7 +535,7 @@ func validateNativePolicy(policy NativePolicy) error {
 	}
 	seen := map[string]struct{}{}
 	for _, capability := range policy.RequiredCapabilities {
-		if capability != "storage_conditional_batch_v1" && capability != "storage_conditional_point_read" && capability != "storage_conditional_snapshot_read" && capability != "storage_conditional_snapshot_read_v2" && capability != "revision_stream" && capability != "native_kv_read" && capability != "native_shared_core" {
+		if capability != "storage_conditional_batch_v1" && capability != "storage_conditional_point_read" && capability != "storage_conditional_snapshot_read" && capability != "storage_conditional_snapshot_read_v2" && capability != "revision_stream" && capability != "native_kv_read" && capability != "native_shared_core" && capability != "native_sql_context" {
 			return fmt.Errorf("unknown required native capability %q", capability)
 		}
 		if _, exists := seen[capability]; exists {
@@ -893,6 +905,15 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 	if hasKVRead != kvReadFeature || hasKVRead != kvReadSymbol {
 		return build, fmt.Errorf("native_kv_read capability, feature, and ABI symbol do not match")
 	}
+	_, hasSQLContext := capabilities["native_sql_context@1"]
+	if hasSQLContext != containsString(build.Features, "native_sql_context_v1") {
+		return build, fmt.Errorf("native SQL context capability and feature do not match")
+	}
+	for _, symbol := range sqlContextSymbols {
+		if hasSQLContext != containsString(build.ABI.RequiredSymbols, symbol) {
+			return build, fmt.Errorf("native SQL context capability and ABI symbols do not match")
+		}
+	}
 	conditionalV2, ok := capabilities["native_conditional_transaction_v2@2"]
 	if !ok || conditionalV2.Version != 2 || conditionalV2.Status != "available" {
 		return build, fmt.Errorf("native_conditional_transaction_v2 is not available to this SDK")
@@ -926,7 +947,7 @@ func verifyCoreBuildIdentity(data []byte, verified *verifiedNative) (coreBuildMa
 
 func verifyRequiredRuntimeCapabilities(build coreBuildManifest, required []string) error {
 	for _, name := range required {
-		if name != "revision_stream" && name != "storage_conditional_point_read" && name != "storage_conditional_snapshot_read" && name != "storage_conditional_snapshot_read_v2" && name != "native_kv_read" && name != "native_shared_core" {
+		if name != "revision_stream" && name != "storage_conditional_point_read" && name != "storage_conditional_snapshot_read" && name != "storage_conditional_snapshot_read_v2" && name != "native_kv_read" && name != "native_shared_core" && name != "native_sql_context" {
 			continue
 		}
 		capabilityName, version := name, 0
@@ -940,13 +961,18 @@ func verifyRequiredRuntimeCapabilities(build coreBuildManifest, required []strin
 			version = revisionStreamVersion
 		} else if name == "native_kv_read" {
 			version = 1
-		} else if name == "native_shared_core" {
+		} else if name == "native_shared_core" || name == "native_sql_context" {
 			version = 1
 		}
 		found := findNativeCapability(build.Capabilities, capabilityName, version)
 		available := false
 		if name == "native_kv_read" {
 			available = found != nil && found.Status == "available" && containsString(build.Features, "native_kv_read_v1") && containsString(build.ABI.RequiredSymbols, "talon_kv_read_v1")
+		} else if name == "native_sql_context" {
+			available = found != nil && found.Status == "available" && containsString(build.Features, "native_sql_context_v1")
+			for _, symbol := range sqlContextSymbols {
+				available = available && containsString(build.ABI.RequiredSymbols, symbol)
+			}
 		} else if name == "native_shared_core" {
 			available = found != nil && found.Status == "available" && containsString(build.Features, "native_shared_core_v1") && containsString(build.ABI.RequiredSymbols, "talon_open") && containsString(build.ABI.RequiredSymbols, "talon_close") && containsString(build.ABI.RequiredSymbols, "talon_execute")
 		} else if name == "revision_stream" {

@@ -16,6 +16,9 @@ import (
 
 type fakeNative struct {
 	queryCalls []string
+	contexts   []context.Context
+	closed     int
+	execHook   func(context.Context, string) error
 	execCalls  []string
 	result     talon.SQLResult
 	capability error
@@ -23,8 +26,9 @@ type fakeNative struct {
 	queryError error
 }
 
-func (f *fakeNative) QueryResult(sql string, _ ...talon.Value) (talon.SQLResult, error) {
+func (f *fakeNative) QueryResultContext(ctx context.Context, sql string, _ ...talon.Value) (talon.SQLResult, error) {
 	f.queryCalls = append(f.queryCalls, sql)
+	f.contexts = append(f.contexts, ctx)
 	return f.result, f.queryError
 }
 
@@ -71,11 +75,18 @@ func TestGoFrameInsertVariantsUseTalonNativeSyntax(t *testing.T) {
 		t.Fatalf("replace SQL=%q", fake.queryCalls[1])
 	}
 }
-func (f *fakeNative) Exec(sql string, _ ...talon.Value) error {
+func (f *fakeNative) ExecContext(ctx context.Context, sql string, _ ...talon.Value) error {
 	f.execCalls = append(f.execCalls, sql)
+	f.contexts = append(f.contexts, ctx)
+	if f.execHook != nil {
+		return f.execHook(ctx, sql)
+	}
 	return f.execError
 }
-func (*fakeNative) Close()                           {}
+func (f *fakeNative) SQLRollbackContext(ctx context.Context) error {
+	return f.ExecContext(ctx, "ROLLBACK")
+}
+func (f *fakeNative) Close()                         { f.closed++ }
 func (f *fakeNative) RequireCapability(string) error { return f.capability }
 
 func TestNativeQueryUsesDescribedColumns(t *testing.T) {

@@ -22,6 +22,15 @@ typedef const char *(*talon_last_error_fn)(void);
 typedef const char *(*talon_last_error_code_fn)(void);
 typedef int (*talon_build_manifest_fn)(char **);
 
+typedef TalonSDKSqlContext *(*sql_context_new_fn)(uint64_t);
+typedef int (*sql_context_cancel_fn)(TalonSDKSqlContext *);
+typedef void (*sql_context_free_fn)(TalonSDKSqlContext *);
+typedef int (*execute_sql_context_fn)(const TalonSDKHandle *, const char *, TalonSDKSqlContext *, char **);
+static sql_context_new_fn native_sql_context_new;
+static sql_context_cancel_fn native_sql_context_cancel;
+static sql_context_free_fn native_sql_context_free;
+static execute_sql_context_fn native_execute_sql_context;
+
 static void *native_library;
 static talon_open_fn native_open;
 static talon_close_fn native_close;
@@ -46,6 +55,10 @@ static void set_loader_error(const char *prefix, const char *detail) {
 }
 
 static void clear_symbols(void) {
+    native_sql_context_new = NULL;
+    native_sql_context_cancel = NULL;
+    native_sql_context_free = NULL;
+    native_execute_sql_context = NULL;
     native_open = NULL;
     native_close = NULL;
     native_persist = NULL;
@@ -140,6 +153,11 @@ int talon_sdk_load(const char *library_path) {
     (void)dlerror();
     /* Older signed Core ABIs remain loadable. Go checks the versioned gate. */
     *(void **)(&native_kv_read_v1) = dlsym(library, "talon_kv_read_v1");
+    (void)dlerror();
+    *(void **)(&native_sql_context_new) = dlsym(library, "talon_sql_context_new_v1");
+    *(void **)(&native_sql_context_cancel) = dlsym(library, "talon_sql_context_cancel_v1");
+    *(void **)(&native_sql_context_free) = dlsym(library, "talon_sql_context_free_v1");
+    *(void **)(&native_execute_sql_context) = dlsym(library, "talon_exec_sql_context_v1");
     (void)dlerror();
     native_library = library;
     return 0;
@@ -294,3 +312,46 @@ void talon_sdk_free_bytes(uint8_t *ptr, size_t len) {
         native_free_bytes(ptr, len);
     }
 }
+
+TalonSDKSqlContext *talon_sdk_sql_context_new(uint64_t timeout_ms) {
+    return native_sql_context_new == NULL ? NULL : native_sql_context_new(timeout_ms);
+}
+int talon_sdk_sql_context_cancel(TalonSDKSqlContext *ctx) {
+    return native_sql_context_cancel == NULL ? -1 : native_sql_context_cancel(ctx);
+}
+void talon_sdk_sql_context_free(TalonSDKSqlContext *ctx) {
+    if (native_sql_context_free != NULL) native_sql_context_free(ctx);
+}
+int talon_sdk_execute_sql_context(const TalonSDKHandle *handle, const char *cmd,
+    TalonSDKSqlContext *ctx, char **output, char *code, size_t code_len) {
+    if (native_execute_sql_context == NULL || native_sql_context_new == NULL ||
+        native_sql_context_cancel == NULL || native_sql_context_free == NULL) {
+        if (code != NULL && code_len > 0) snprintf(code, code_len, "%s", "capability_unavailable");
+        return -1;
+    }
+    int rc = native_execute_sql_context(handle, cmd, ctx, output);
+    if (rc != 0) capture_error_code(code, code_len);
+    else if (code != NULL && code_len > 0) code[0] = '\0';
+    return rc;
+}
+
+#ifdef TALON_SQL_CONTEXT_TEST
+/* Only the explicitly tagged SDK test build can reach token-specific test gates. */
+int talon_sdk_test_context_arm(TalonSDKSqlContext *ctx, uint32_t stage) {
+    void (*arm)(TalonSDKSqlContext *, uint32_t);
+    *(void **)(&arm) = dlsym(native_library, "talon_sql_context_test_arm_v1");
+    if (arm == NULL) return -1;
+    arm(ctx, stage); return 0;
+}
+uint32_t talon_sdk_test_context_entered(TalonSDKSqlContext *ctx) {
+    uint32_t (*entered)(TalonSDKSqlContext *);
+    *(void **)(&entered) = dlsym(native_library, "talon_sql_context_test_entered_v1");
+    return entered == NULL ? 0 : entered(ctx);
+}
+int talon_sdk_test_context_release(TalonSDKSqlContext *ctx) {
+    void (*release)(TalonSDKSqlContext *);
+    *(void **)(&release) = dlsym(native_library, "talon_sql_context_test_release_v1");
+    if (release == NULL) return -1;
+    release(ctx); return 0;
+}
+#endif

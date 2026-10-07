@@ -105,6 +105,16 @@ func validateLocalDevelopmentBuild(build coreBuildManifest, p LocalDevelopmentPo
 	if build.ABI.Profile != p.ExpectedABIProfile || build.ABI.Version != p.ExpectedABIVersion || !supportedNativeSymbolSet(build.ABI.RequiredSymbols) {
 		return fmt.Errorf("local Core ABI differs from pinned SDK-supported ABI")
 	}
+	cap, has := singleNativeCapability(build.Capabilities, "native_sql_context")
+	hasFeature := containsString(build.Features, "native_sql_context_v1")
+	if has != hasFeature || (has && cap.Version != 1) {
+		return fmt.Errorf("local SQL context capability/feature mismatch")
+	}
+	for _, symbol := range sqlContextSymbols {
+		if has != containsString(build.ABI.RequiredSymbols, symbol) {
+			return fmt.Errorf("local SQL context capability/symbol mismatch")
+		}
+	}
 	for _, identity := range p.RequiredCapabilities {
 		name, version, err := parseLocalCapability(identity)
 		if err != nil {
