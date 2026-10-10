@@ -3,9 +3,9 @@ package goframe
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
-	talon "github.com/darkmice/talon-sdk-go"
 	"github.com/gogf/gf/v2/database/gdb"
 )
 
@@ -28,7 +28,7 @@ func TestGoFrameSQLConstraintRelease(t *testing.T) {
 	reject := func(s string, p ...interface{}) {
 		t.Helper()
 		_, e := db.Exec(ctx, s, p...)
-		if e == nil || talon.NativeCodeOf(e) != "sql_exec_error" {
+		if e == nil || !strings.Contains(e.Error(), "UNIQUE") {
 			t.Fatalf("expected UNIQUE rejection %s: %v", s, e)
 		}
 	}
