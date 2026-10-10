@@ -2,7 +2,6 @@ package talon
 
 import (
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -26,7 +25,7 @@ func TestEmbeddedSQLConstraintRelease(t *testing.T) {
 	reject := func(s string) {
 		t.Helper()
 		e := db.Exec(s)
-		if e == nil || !strings.Contains(e.Error(), "UNIQUE") {
+		if e == nil || NativeCodeOf(e) != "sql_exec_error" {
 			t.Fatalf("expected UNIQUE rejection for %s: %v", s, e)
 		}
 	}
