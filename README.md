@@ -184,7 +184,7 @@ Except for the explicit local development mode below, `Open` checks whether any
 release `TALON_NATIVE_*` environment variable is set;
 if so, it reads the complete explicit policy below and fails on a partial one.
 Otherwise it selects the version-pinned `talon-bin/go-runtime` module. That
-module is pinned to the signed `v0.1.54` release and embeds the native runtime
+module is pinned to the signed `v0.1.55` release and embeds the native runtime
 for `darwin/amd64`, `darwin/arm64`, `linux/amd64`, and `linux/arm64`. `go get`
 resolves that fixed module version; `Open` verifies and loads its signed runtime
 without downloading a release at application startup. Unsupported platforms
@@ -582,12 +582,28 @@ revision-stream features. The external signed manifest deliberately retains its
 v1 `gates` shape; proof admission comes from the artifact-bound Core
 self-manifest rather than an invented external gate.
 
-The signed `talon-bin` `v0.1.54` release includes Core binary
+The signed `talon-bin` `v0.1.55` release includes Core binary
 self-attestation and four-platform SDK acceptance. Native startup still fails
 closed if its signature, pinned identity, archive members, or loaded Core
 self-manifest do not match. The SDK does not emulate conditional transactions
 with process locks, read-then-write, multiple `setnx` calls, or SQL
 interpolation.
+
+## SQL constraint release baseline
+
+SDK `v0.7.6` pins signed runtime `v0.1.55`, built from Core `v0.1.2`.
+That Core unifies SQL keyword boundaries (including legal `checked_*`,
+`constraint_*` and other identifier prefixes) and enforces column, table and
+named UNIQUE constraints through the common write path. The release regressions
+cover embedded binary SQL, GoFrame context JSON SQL and the real HTTP Server,
+including rejected duplicates, atomic failed statements and restart readback.
+
+Binary SQL reports `sql_exec_error`; the current GoFrame context JSON path
+retains the UNIQUE diagnostic without that machine code. Do not classify
+production retries from a generic SQL code or diagnostic text. Upgrading does
+not restore columns or constraint declarations omitted by a historical parser;
+compare the persisted schema with the application's versioned source and apply
+an explicit migration where required.
 
 ## License
 
